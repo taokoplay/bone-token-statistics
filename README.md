@@ -117,3 +117,7 @@ MIT，全文见 [LICENSE](LICENSE)。Copyright (c) 2026 taokoplay。
 回归验证：`node --test tests/project-names.test.cjs`（3 项）、
 `node tests/backend.test.cjs`（60 项）、`node tests/unit.test.cjs`（23 项）。
 未在用户运行中的桌面实例上进行安装验证。
+
+## 0.1.2 布局更新
+
+周 × 小时热力图的 24 列自动等分卡片可用宽度，消除宽卡片右侧留白，并减少窄屏横向滚动。小时标签与数据列同步伸缩，星期行和统计口径不变。

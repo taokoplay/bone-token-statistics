@@ -287,7 +287,7 @@ async function main() {
     const bad = await mod.onPanelInvoke("stats.nope", {});
     check("unknown channel refused", bad.ok === false && bad.code === "UNSUPPORTED");
     const ping = await mod.onPanelInvoke("stats.ping", {});
-    check("ping answers", ping.ok === true && ping.version === "0.1.1");
+    check("ping answers", ping.ok === true && ping.version === "0.1.2");
   }
 
   const failed = results.filter((r) => !r.ok);

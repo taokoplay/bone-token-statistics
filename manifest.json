@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bone.token.statistics",
   "name": "BoneTokenStatistics",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "跨所有项目的 token 用量统计：按时间、项目、模型、会话聚合轮次与输入/输出/缓存/推理 tokens，附日趋势、周×小时热力图与可选的成本估算。只读 pi.usage.listTurns，不读取消息正文。",
   "author": "xutaoyu",
   "license": "MIT",

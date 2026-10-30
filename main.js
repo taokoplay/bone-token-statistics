@@ -317,7 +317,7 @@ const CHANNELS = {
   /** Cheap identity check for the view header. */
   "stats.ping": async () => {
     const settings = await readSettings();
-    return { ok: true, version: "0.1.1", defaultDays: settings.defaultDays, currency: settings.currency };
+    return { ok: true, version: "0.1.2", defaultDays: settings.defaultDays, currency: settings.currency };
   },
 };
 
