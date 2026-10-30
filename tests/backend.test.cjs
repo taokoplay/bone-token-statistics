@@ -76,6 +76,13 @@ function makePi({ settings = {}, universe, pageSize = 7, getTimesOut = false }) 
           return { turns: slice, nextCursor: start + pageSize < rows.length ? String(start + pageSize) : null };
         },
       },
+      desktop: {
+        invoke: async (input) => {
+          if (input.operation !== "project/list") throw new Error("Unexpected operation");
+          if (getTimesOut) throw new Error("Catalog unavailable");
+          return { projects: universe.projects.map(project => ({ id: project.id, name: "", path: project.path })) };
+        },
+      },
       session: {
         get: async ({ sessionId }) => {
           calls.sessionGet.push(sessionId);
@@ -150,7 +157,7 @@ async function main() {
     check("no truncation on a small window", answer.truncated.hits === false);
   }
 
-  // 2. project names : resolved from session.get, override wins, unresolved falls back
+  // 2. project names : resolved from project/list, override wins, unresolved falls back
   {
     freshModule();
     const env = makePi({ settings: { defaultDays: 30, projectNames: { "7": "PI-Desktop（自定义）" } }, universe });
@@ -166,12 +173,12 @@ async function main() {
     check("session rows carry the project name", answer.sessions.some((s) => s.projectName === "Framecraft"));
   }
 
-  // 3. session.get failure must not break the snapshot
+  // 3. project/list failure must not break the snapshot
   {
     freshModule();
     global.pi = makePi({ settings: { defaultDays: 30 }, universe, getTimesOut: true }).api;
     const answer = await snapshot({ days: 10, toMs: now });
-    check("a failing session.get still returns numbers", answer.ok === true && answer.totals.turns > 0);
+    check("a failing project/list still returns numbers", answer.ok === true && answer.totals.turns > 0);
     check("names degrade to ids", answer.projects.every((p) => p.name === null && p.label === `项目 #${p.id}`));
   }
 
@@ -280,7 +287,7 @@ async function main() {
     const bad = await mod.onPanelInvoke("stats.nope", {});
     check("unknown channel refused", bad.ok === false && bad.code === "UNSUPPORTED");
     const ping = await mod.onPanelInvoke("stats.ping", {});
-    check("ping answers", ping.ok === true && ping.version === "0.1.0");
+    check("ping answers", ping.ok === true && ping.version === "0.1.1");
   }
 
   const failed = results.filter((r) => !r.ok);
