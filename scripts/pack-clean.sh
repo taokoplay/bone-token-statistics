@@ -11,7 +11,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-cp "$root/manifest.json" "$root/main.js" "$root/README.md" "$stage/"
+cp "$root/manifest.json" "$root/main.js" "$root/README.md" "$root/LICENSE" "$stage/"
 cp -R "$root/lib" "$root/views" "$stage/"
 
 cli="${PI_PLUGIN_CLI:-}"
