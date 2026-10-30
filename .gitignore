@@ -1,0 +1,9 @@
+# 宿主安装产物
+dist/
+
+# 测试临时产物
+tests/preview/preview.html
+tests/preview/shots/
+
+# macOS
+.DS_Store

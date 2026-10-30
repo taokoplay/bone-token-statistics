@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "id": "bone.token.statistics",
+  "name": "BoneTokenStatistics",
+  "version": "0.1.0",
+  "description": "跨所有项目的 token 用量统计：按时间、项目、模型、会话聚合轮次与输入/输出/缓存/推理 tokens，附日趋势、周×小时热力图与可选的成本估算。只读 pi.usage.listTurns，不读取消息正文。",
+  "author": "xutaoyu",
+  "license": "MIT",
+  "main": "main.js",
+  "contributes": {
+    "commands": [
+      {
+        "id": "bone.stats.open",
+        "title": "BoneTokenStatistics: 打开统计",
+        "category": "Bone",
+        "keywords": [
+          "token",
+          "usage",
+          "统计",
+          "用量",
+          "tokens",
+          "cost",
+          "项目"
+        ]
+      }
+    ],
+    "views": [
+      {
+        "id": "stats",
+        "entry": "views/index.html",
+        "title": {
+          "en": "Token Statistics",
+          "zh-CN": "Token 统计"
+        },
+        "icon": "target",
+        "order": 30
+      }
+    ],
+    "settings": [
+      {
+        "key": "defaultDays",
+        "title": "默认时间范围（天）",
+        "description": "打开视图时默认统计最近多少天。可选 7 / 30 / 90 / 365。",
+        "type": "select",
+        "default": 30,
+        "enum": [
+          {
+            "label": "7 天",
+            "value": 7
+          },
+          {
+            "label": "30 天",
+            "value": 30
+          },
+          {
+            "label": "90 天",
+            "value": 90
+          },
+          {
+            "label": "365 天",
+            "value": 365
+          }
+        ]
+      },
+      {
+        "key": "maxTurns",
+        "title": "最多读取的轮次数",
+        "description": "单次统计最多读取多少条已完成轮次（每页 500 条）。数据更多时只统计最近的这些，界面会标出“已截断”。默认 20000。",
+        "type": "number",
+        "default": 20000
+      },
+      {
+        "key": "rates",
+        "title": "单价表（可选，用于成本估算）",
+        "description": "JSON：模型 id → 每百万 token 的价格，例如 {\"deepseek-v4-flash\":{\"input\":0.5,\"output\":2,\"cacheRead\":0.05}}。留空则不显示任何金额。未列出的模型只统计 token，不计价。",
+        "type": "json",
+        "default": {}
+      },
+      {
+        "key": "currency",
+        "title": "成本估算币种",
+        "description": "只影响显示符号，插件不做汇率换算。",
+        "type": "select",
+        "default": "CNY",
+        "enum": [
+          {
+            "label": "人民币 ¥",
+            "value": "CNY"
+          },
+          {
+            "label": "美元 $",
+            "value": "USD"
+          }
+        ]
+      },
+      {
+        "key": "projectNames",
+        "title": "项目显示名（可选）",
+        "description": "JSON：项目 id → 显示名，例如 {\"12\":\"Framecraft\"}。留空时插件会尝试从该项目的会话里读出目录名；都取不到就显示“项目 #id”。",
+        "type": "json",
+        "default": {}
+      }
+    ]
+  },
+  "permissions": [
+    "ui.view",
+    "usage.read",
+    "session.read"
+  ],
+  "engines": {
+    "piDesktop": ">=0.21.0"
+  },
+  "activationEvents": [
+    "onStartup",
+    "onView:stats"
+  ]
+}

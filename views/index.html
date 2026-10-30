@@ -1,0 +1,3992 @@
+<!doctype html>
+<html lang="zh-CN" data-base="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="pi-plugin-chrome" content="v2" />
+    <title>Token 统计</title>
+    <style>
+      /*
+        BoneTokenStatistics — one self-contained view.
+
+        Visual contract (follows the host devkit panel template + tokens.css):
+          surfaces   dark  page #181818 / card #212121
+                     light page #f9f9f9 / card #ffffff
+          ink        four alpha tiers over the page (primary / secondary /
+                     muted / faint); every step keeps >= 4.4:1 at 11px.
+          accent     monochrome: white in dark, #1a1c1f in light. Charts and the
+                     heat ramp are steps of that single accent, never a hue.
+          semantics  good / warn / bad only for state, never for series.
+          rhythm     4px base, 8px steps; radii 6/8/10/14; type 10.5–22px.
+          motion     fast 150ms for hover/press, base 190ms for entrance;
+                     no `transition: all`, no linear state transitions.
+
+        Do: keep every grid track `minmax(0, …)` so long ids reflow instead of
+            pushing the panel; scroll wide tables and the heat grid inside
+            their own box.
+        Don't: clip a layout defect with overflow:hidden, paint money when the
+            payload has no cost, or fabricate chart points for missing days.
+      */
+      :root {
+        color-scheme: dark;
+
+        --bg: #181818;
+        --surface: #212121;
+        --surface-2: #282828;
+        --tile: color-mix(in oklab, #ffffff 4%, transparent);
+        --tile-hover: color-mix(in oklab, #ffffff 7%, transparent);
+        --tile-press: color-mix(in oklab, #ffffff 10%, transparent);
+
+        --line: color-mix(in oklab, #ffffff 9%, transparent);
+        --line-soft: color-mix(in oklab, #ffffff 5%, transparent);
+        --line-strong: color-mix(in oklab, #ffffff 16%, transparent);
+
+        --fg: #ffffff;
+        --fg-2: color-mix(in oklab, #ffffff 74%, transparent);
+        --fg-3: color-mix(in oklab, #ffffff 56%, transparent);
+        --fg-4: color-mix(in oklab, #ffffff 46%, transparent);
+
+        --accent: #ffffff;
+        --accent-ink: #181818;
+        --focus: #ffffff;
+
+        --good: #40c977;
+        --warn: #ff8549;
+        --bad: #ff6764;
+
+        --seg-input: #ffffff;
+        --seg-output: color-mix(in oklab, #ffffff 55%, var(--surface));
+        --seg-cache: color-mix(in oklab, #ffffff 27%, var(--surface));
+
+        --heat-0: color-mix(in oklab, #ffffff 5%, transparent);
+        --heat-1: color-mix(in oklab, #ffffff 14%, transparent);
+        --heat-2: color-mix(in oklab, #ffffff 28%, transparent);
+        --heat-3: color-mix(in oklab, #ffffff 45%, transparent);
+        --heat-4: color-mix(in oklab, #ffffff 64%, transparent);
+        --heat-5: #ffffff;
+
+        --r-xs: 6px;
+        --r-sm: 8px;
+        --r-md: 10px;
+        --r-lg: 14px;
+        --r-full: 999px;
+
+        --sp-1: 4px;
+        --sp-2: 8px;
+        --sp-3: 12px;
+        --sp-4: 16px;
+        --sp-5: 24px;
+        --sp-6: 32px;
+
+        --fs-2xs: 10.5px;
+        --fs-xs: 11px;
+        --fs-sm: 12px;
+        --fs-md: 13px;
+        --fs-lg: 15px;
+        --fs-xl: 18px;
+        --fs-2xl: 22px;
+
+        --dur-fast: 150ms;
+        --dur-base: 190ms;
+        --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+        --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+        --pad: clamp(12px, 1.7vw, 20px);
+        --shadow-pop: 0 14px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      }
+
+      :root[data-base="light"] {
+        color-scheme: light;
+
+        --bg: #f9f9f9;
+        --surface: #ffffff;
+        --surface-2: #ffffff;
+        --tile: color-mix(in oklab, #1a1c1f 4%, transparent);
+        --tile-hover: color-mix(in oklab, #1a1c1f 7%, transparent);
+        --tile-press: color-mix(in oklab, #1a1c1f 10%, transparent);
+
+        --line: color-mix(in oklab, #1a1c1f 10%, transparent);
+        --line-soft: color-mix(in oklab, #1a1c1f 6%, transparent);
+        --line-strong: color-mix(in oklab, #1a1c1f 18%, transparent);
+
+        --fg: #1a1c1f;
+        --fg-2: color-mix(in oklab, #1a1c1f 76%, transparent);
+        --fg-3: #5d5d5d;
+        --fg-4: #6d6f72;
+
+        --accent: #1a1c1f;
+        --accent-ink: #ffffff;
+        --focus: #1a1c1f;
+
+        --good: #00a240;
+        --warn: #c24a00;
+        --bad: #d02a26;
+
+        --seg-input: #1a1c1f;
+        --seg-output: color-mix(in oklab, #1a1c1f 56%, var(--surface));
+        --seg-cache: color-mix(in oklab, #1a1c1f 30%, var(--surface));
+
+        --heat-0: color-mix(in oklab, #1a1c1f 5%, transparent);
+        --heat-1: color-mix(in oklab, #1a1c1f 14%, transparent);
+        --heat-2: color-mix(in oklab, #1a1c1f 30%, transparent);
+        --heat-3: color-mix(in oklab, #1a1c1f 50%, transparent);
+        --heat-4: color-mix(in oklab, #1a1c1f 72%, transparent);
+        --heat-5: #1a1c1f;
+
+        --shadow-pop: 0 14px 36px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.06);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--sans);
+        font-size: var(--fs-md);
+        line-height: 1.45;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ul,
+      ol,
+      figure,
+      dl,
+      dd,
+      dt {
+        margin: 0;
+      }
+
+      ul,
+      ol {
+        padding: 0;
+        list-style: none;
+      }
+
+      button,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+
+      table {
+        border-collapse: collapse;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.94em;
+        letter-spacing: -0.01em;
+      }
+
+      button:focus-visible,
+      select:focus-visible,
+      a:focus-visible,
+      [tabindex="0"]:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      /* ── shell ─────────────────────────────────────────────────────────── */
+
+      .view {
+        min-height: 100vh;
+        /* 0px in a docked work-panel view; 46px in a detached panel window. */
+        padding-top: var(--pi-plugin-titlebar-height, 0px);
+        padding-bottom: var(--sp-4);
+      }
+
+      .bar {
+        position: sticky;
+        top: var(--pi-plugin-titlebar-height, 0px);
+        z-index: 6;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--sp-2) var(--sp-4);
+        padding: calc(var(--pad) * 0.85) var(--pad) var(--sp-2);
+        background: color-mix(in oklab, var(--bg) 94%, transparent);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--line-soft);
+        transition: opacity var(--dur-fast) var(--ease-out);
+      }
+
+      .bar[data-refresh="true"] {
+        opacity: 0.6;
+      }
+
+      .bar-main {
+        display: flex;
+        flex: 1 1 16ch;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+
+      .bar-title {
+        font-size: var(--fs-lg);
+        font-weight: 560;
+        letter-spacing: -0.01em;
+        line-height: 1.25;
+      }
+
+      .bar-sub {
+        font-size: var(--fs-sm);
+        color: var(--fg-3);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .bar-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        font-size: var(--fs-xs);
+        color: var(--fg-4);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .bar-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-2);
+        margin-left: auto;
+      }
+
+      .badge-warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 18px;
+        padding: 0 7px;
+        border: 1px solid color-mix(in oklab, var(--warn) 38%, transparent);
+        border-radius: var(--r-full);
+        background: color-mix(in oklab, var(--warn) 14%, transparent);
+        color: color-mix(in oklab, var(--warn) 70%, var(--fg));
+        font-size: var(--fs-2xs);
+        font-weight: 560;
+        letter-spacing: 0.01em;
+      }
+
+      .badge-warn[hidden] {
+        display: none;
+      }
+
+      /* ── controls ──────────────────────────────────────────────────────── */
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        background: var(--tile);
+        color: var(--fg);
+        font-size: var(--fs-sm);
+        font-weight: 500;
+        white-space: nowrap;
+        cursor: pointer;
+        transition:
+          background-color var(--dur-fast) var(--ease-out),
+          border-color var(--dur-fast) var(--ease-out),
+          opacity var(--dur-fast) var(--ease-out),
+          transform var(--dur-fast) var(--ease-out);
+      }
+
+      .btn:hover:not(:disabled) {
+        background: var(--tile-hover);
+        border-color: var(--line-strong);
+      }
+
+      .btn:active:not(:disabled) {
+        background: var(--tile-press);
+        transform: translateY(0.5px);
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn--solid {
+        border-color: transparent;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 560;
+      }
+
+      .btn--solid:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--accent) 86%, var(--surface));
+        border-color: transparent;
+      }
+
+      .btn--solid:active:not(:disabled) {
+        background: color-mix(in oklab, var(--accent) 78%, var(--surface));
+      }
+
+      .spinner {
+        display: none;
+        width: 11px;
+        height: 11px;
+        border: 1.5px solid color-mix(in oklab, var(--fg) 28%, transparent);
+        border-top-color: var(--fg);
+        border-radius: 50%;
+      }
+
+      .btn[data-busy="true"] .spinner {
+        display: block;
+        animation: spin 900ms linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .btn-quiet {
+        display: inline-flex;
+        align-items: center;
+        height: 26px;
+        padding: 0 6px;
+        border: 0;
+        border-radius: var(--r-xs);
+        background: none;
+        color: var(--fg-3);
+        font-size: var(--fs-sm);
+        text-decoration: underline;
+        text-decoration-color: color-mix(in oklab, var(--fg-4) 60%, transparent);
+        text-underline-offset: 3px;
+        cursor: pointer;
+        transition:
+          color var(--dur-fast) var(--ease-out),
+          background-color var(--dur-fast) var(--ease-out);
+      }
+
+      .btn-quiet:hover {
+        background: var(--tile);
+        color: var(--fg);
+      }
+
+      .btn-quiet[hidden] {
+        display: none;
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2) var(--sp-3);
+        padding: var(--sp-2) var(--pad) var(--sp-3);
+      }
+
+      .chips {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 2px;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-full);
+        background: var(--tile);
+      }
+
+      .seg {
+        position: relative;
+        display: inline-flex;
+        cursor: pointer;
+      }
+
+      .seg input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: var(--r-full);
+        background: none;
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+      }
+
+      .seg > span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 24px;
+        padding: 0 10px;
+        border-radius: var(--r-full);
+        color: var(--fg-3);
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        transition:
+          background-color var(--dur-fast) var(--ease-out),
+          color var(--dur-fast) var(--ease-out);
+      }
+
+      .seg:hover > span {
+        color: var(--fg);
+      }
+
+      .seg input:checked + span {
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 560;
+      }
+
+      .field {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .field-label {
+        color: var(--fg-4);
+        font-size: var(--fs-xs);
+        white-space: nowrap;
+      }
+
+      .select-wrap {
+        position: relative;
+        display: inline-flex;
+        min-width: 0;
+      }
+
+      .select-wrap::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 9px;
+        width: 5px;
+        height: 5px;
+        border-right: 1.4px solid var(--fg-3);
+        border-bottom: 1.4px solid var(--fg-3);
+        transform: translateY(-70%) rotate(45deg);
+        pointer-events: none;
+      }
+
+      .select {
+        width: 100%;
+        min-width: 92px;
+        max-width: 168px;
+        height: 26px;
+        padding: 0 24px 0 9px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        background: var(--tile);
+        color: var(--fg);
+        font-size: var(--fs-sm);
+        text-overflow: ellipsis;
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+        transition:
+          background-color var(--dur-fast) var(--ease-out),
+          border-color var(--dur-fast) var(--ease-out);
+      }
+
+      .select:hover {
+        background: var(--tile-hover);
+        border-color: var(--line-strong);
+      }
+
+      .select option {
+        background: var(--surface-2);
+        color: var(--fg);
+      }
+
+      /* ── panels ────────────────────────────────────────────────────────── */
+
+      .main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--sp-3);
+        padding: 0 var(--pad);
+      }
+
+      .panel {
+        min-width: 0;
+        padding: var(--sp-3);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-lg);
+        background: var(--surface);
+      }
+
+      .panel-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--sp-1) var(--sp-2);
+        margin-bottom: var(--sp-3);
+      }
+
+      .panel-head h2 {
+        font-size: var(--fs-md);
+        font-weight: 560;
+        letter-spacing: -0.005em;
+      }
+
+      .panel-meta {
+        color: var(--fg-4);
+        font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .panel-foot {
+        margin-top: var(--sp-2);
+        color: var(--fg-4);
+        font-size: var(--fs-xs);
+      }
+
+      .scroll-hint {
+        margin-top: var(--sp-2);
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+      }
+
+      .scroll-hint[hidden] {
+        display: none;
+      }
+
+      /* ── KPI ───────────────────────────────────────────────────────────── */
+
+      .kpi-group + .kpi-group {
+        margin-top: var(--sp-4);
+      }
+
+      .kpi-wrap + .kpi-group-label {
+        margin: var(--sp-4) 0 6px 2px;
+      }
+
+      .kpi-group-label {
+        margin: 0 0 6px 2px;
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .kpi-wrap {
+        overflow: hidden;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-md);
+        background: var(--surface);
+      }
+
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+      }
+
+      /*
+       * Seams are drawn by each tile (right + bottom hairline) instead of by a
+       * gap over a coloured wrapper: a partial last row then reads as an empty
+       * slot, not as a lighter block where a tile is missing.
+       */
+      .kpi {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+        padding: 9px 11px 10px;
+        background: var(--surface);
+        box-shadow:
+          1px 0 0 var(--line-soft),
+          0 1px 0 var(--line-soft);
+      }
+
+      .kpi--cost {
+        background: color-mix(in oklab, var(--surface) 93%, var(--fg));
+      }
+
+      .kpi-label {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+        color: var(--fg-3);
+        font-size: var(--fs-2xs);
+        letter-spacing: 0.01em;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+      }
+
+      .kpi-value {
+        color: var(--fg);
+        font-size: clamp(15px, 0.9vw + 9px, 20px);
+        font-weight: 560;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.02em;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+
+      .kpi-sub {
+        overflow: hidden;
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        height: 13px;
+        padding: 0 4px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--fg-3);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        text-transform: none;
+      }
+
+      .tag--warn {
+        border-color: color-mix(in oklab, var(--warn) 34%, transparent);
+        background: color-mix(in oklab, var(--warn) 12%, transparent);
+        color: color-mix(in oklab, var(--warn) 68%, var(--fg));
+      }
+
+      /* ── trend ─────────────────────────────────────────────────────────── */
+
+      .trend-host {
+        position: relative;
+        min-width: 0;
+      }
+
+      .trend-svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .axis-text {
+        fill: var(--fg-4);
+        font-family: var(--sans);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .axis-grid {
+        stroke: var(--line-soft);
+        stroke-width: 1;
+      }
+
+      .axis-base {
+        stroke: var(--line);
+        stroke-width: 1;
+      }
+
+      .seg-input {
+        fill: var(--seg-input);
+      }
+
+      .seg-output {
+        fill: var(--seg-output);
+      }
+
+      .seg-cache {
+        fill: var(--seg-cache);
+      }
+
+      .seg-zero {
+        fill: var(--line-strong);
+      }
+
+      .day-bar {
+        outline: none;
+      }
+
+      .day-bar .bar-hit {
+        fill: transparent;
+      }
+
+      .day-bar:focus .bar-hit {
+        fill: color-mix(in oklab, var(--accent) 9%, transparent);
+        stroke: var(--focus);
+        stroke-width: 1.5;
+      }
+
+      .hover-col {
+        fill: color-mix(in oklab, var(--accent) 7%, transparent);
+        pointer-events: none;
+      }
+
+      .plot-hit {
+        cursor: crosshair;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-1) var(--sp-3);
+        margin-top: var(--sp-2);
+        color: var(--fg-3);
+        font-size: var(--fs-xs);
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .swatch {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+      }
+
+      .swatch--input {
+        background: var(--seg-input);
+      }
+
+      .swatch--output {
+        background: var(--seg-output);
+      }
+
+      .swatch--cache {
+        background: var(--seg-cache);
+      }
+
+      /* ── heat map ──────────────────────────────────────────────────────── */
+
+      .heat-body {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 4px;
+      }
+
+      .heat-axis {
+        display: grid;
+        grid-auto-rows: 14px;
+        grid-template-rows: 12px;
+        gap: 2px;
+      }
+
+      .heat-day {
+        display: flex;
+        align-items: center;
+        color: var(--fg-4);
+        font-size: 9.5px;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .heat-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: 2px;
+        scrollbar-width: thin;
+        border-radius: var(--r-xs);
+      }
+
+      .heat-grid {
+        display: grid;
+        grid-template-columns: repeat(24, 14px);
+        grid-template-rows: 12px;
+        grid-auto-rows: 14px;
+        gap: 2px;
+        width: max-content;
+      }
+
+      .heat-h {
+        grid-column: span 3;
+        align-self: end;
+        padding-bottom: 1px;
+        color: var(--fg-4);
+        font-size: 9.5px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+      }
+
+      .hc {
+        border-radius: 2px;
+        transition: box-shadow var(--dur-fast) var(--ease-out);
+      }
+
+      .hc:hover {
+        box-shadow: inset 0 0 0 1px var(--fg-2);
+      }
+
+      .hc[data-level="0"] {
+        background: var(--heat-0);
+      }
+
+      .hc[data-level="1"] {
+        background: var(--heat-1);
+      }
+
+      .hc[data-level="2"] {
+        background: var(--heat-2);
+      }
+
+      .hc[data-level="3"] {
+        background: var(--heat-3);
+      }
+
+      .hc[data-level="4"] {
+        background: var(--heat-4);
+      }
+
+      .hc[data-level="5"] {
+        background: var(--heat-5);
+      }
+
+      .heat-legend {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: var(--sp-2);
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+      }
+
+      .heat-legend .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+      }
+
+      /* ── tables ────────────────────────────────────────────────────────── */
+
+      .table-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-radius: var(--r-xs);
+        scrollbar-width: thin;
+      }
+
+      .tbl {
+        width: 100%;
+        min-width: 540px;
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tbl--models {
+        min-width: 620px;
+      }
+
+      .tbl th,
+      .tbl td {
+        padding: 7px 8px;
+        border-bottom: 1px solid var(--line-soft);
+        text-align: left;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+
+      .tbl thead th {
+        border-bottom: 1px solid var(--line);
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .tbl tbody tr:last-child > th,
+      .tbl tbody tr:last-child > td {
+        border-bottom: 0;
+      }
+
+      .tbl th.num,
+      .tbl td.num {
+        text-align: right;
+      }
+
+      .name-cell {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 260px;
+      }
+
+      .prj-name {
+        overflow: hidden;
+        font-weight: 500;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .spread {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: none;
+        color: var(--fg-4);
+        cursor: pointer;
+        transition:
+          background-color var(--dur-fast) var(--ease-out),
+          color var(--dur-fast) var(--ease-out);
+      }
+
+      .spread:hover {
+        background: var(--tile-hover);
+        color: var(--fg);
+      }
+
+      .spread svg {
+        transition: transform var(--dur-fast) var(--ease-out);
+      }
+
+      .spread[aria-expanded="true"] svg {
+        transform: rotate(90deg);
+      }
+
+      .share {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 88px;
+      }
+
+      .share-track {
+        flex: 1 1 auto;
+        min-width: 26px;
+        height: 4px;
+        overflow: hidden;
+        border-radius: var(--r-full);
+        background: var(--tile);
+      }
+
+      .share-fill {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--accent);
+      }
+
+      .share-val {
+        width: 34px;
+        color: var(--fg-3);
+        font-size: var(--fs-2xs);
+        text-align: right;
+      }
+
+      .dim {
+        color: var(--fg-4);
+      }
+
+      .detail > td {
+        padding: 6px 10px 12px 30px;
+        background: color-mix(in oklab, var(--surface) 90%, var(--fg));
+        white-space: normal;
+      }
+
+      .detail-title {
+        margin-bottom: 6px;
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .detail-list {
+        display: grid;
+        gap: 5px;
+      }
+
+      .detail-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 92px minmax(74px, auto);
+        gap: var(--sp-2);
+        align-items: center;
+        font-size: var(--fs-xs);
+      }
+
+      .detail-row .mono {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .detail-row .share {
+        min-width: 0;
+      }
+
+      .detail-row .num {
+        color: var(--fg-2);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      /* ── sessions ──────────────────────────────────────────────────────── */
+
+      .sessions {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+        gap: 0 var(--sp-4);
+      }
+
+      .sess {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 2px var(--sp-3);
+        align-items: center;
+        min-width: 0;
+        padding: 7px 2px;
+      }
+
+      .sess + .sess {
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .sess-top {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .sess-title {
+        overflow: hidden;
+        color: var(--fg);
+        font-size: var(--fs-sm);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sess-when {
+        flex: none;
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+        white-space: nowrap;
+      }
+
+      .sess-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        min-width: 0;
+        color: var(--fg-4);
+        font-size: var(--fs-2xs);
+      }
+
+      .sess-meta .mono {
+        overflow: hidden;
+        max-width: 100%;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sess-nums {
+        display: flex;
+        grid-row: span 2;
+        gap: 10px;
+        align-items: center;
+        color: var(--fg-2);
+        font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      /* ── notes ─────────────────────────────────────────────────────────── */
+
+      .notes {
+        display: grid;
+        gap: 7px;
+      }
+
+      .notes li {
+        position: relative;
+        padding-left: 12px;
+        color: var(--fg-3);
+        font-size: var(--fs-xs);
+        line-height: 1.55;
+      }
+
+      .notes li::before {
+        content: "";
+        position: absolute;
+        top: 6px;
+        left: 2px;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--fg-4);
+      }
+
+      /* ── states ────────────────────────────────────────────────────────── */
+
+      .state {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+        padding: var(--sp-4) var(--sp-1);
+      }
+
+      .state-mark {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--tile);
+        color: var(--fg-3);
+      }
+
+      .state-title {
+        font-size: var(--fs-md);
+        font-weight: 560;
+      }
+
+      .state-body {
+        max-width: 54ch;
+        color: var(--fg-3);
+        font-size: var(--fs-sm);
+      }
+
+      .state-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-2);
+        margin-top: 2px;
+      }
+
+      .banner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--sp-2);
+        padding: 8px 10px;
+        border: 1px solid color-mix(in oklab, var(--bad) 34%, transparent);
+        border-radius: var(--r-sm);
+        background: color-mix(in oklab, var(--bad) 10%, transparent);
+        font-size: var(--fs-sm);
+      }
+
+      .banner-text {
+        color: var(--fg);
+        min-width: 0;
+      }
+
+      /* skeleton */
+
+      .sk {
+        display: grid;
+        gap: var(--sp-3);
+      }
+
+      .sk-panel {
+        padding: var(--sp-3);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-lg);
+        background: var(--surface);
+      }
+
+      .sk-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+        gap: 1px;
+        overflow: hidden;
+        border-radius: var(--r-md);
+      }
+
+      .sk-tile {
+        height: 58px;
+        background: var(--tile);
+      }
+
+      .sk-block {
+        height: 168px;
+        border-radius: var(--r-md);
+        background: var(--tile);
+      }
+
+      .sk-line {
+        width: 34%;
+        height: 10px;
+        margin-bottom: 10px;
+        border-radius: var(--r-xs);
+        background: var(--tile);
+      }
+
+      .sk-block,
+      .sk-tile {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .sk-block::after,
+      .sk-tile::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(
+          90deg,
+          transparent,
+          color-mix(in oklab, var(--fg) 7%, transparent),
+          transparent
+        );
+        animation: sweep 1500ms var(--ease-out) infinite;
+      }
+
+      @keyframes sweep {
+        to {
+          transform: translateX(100%);
+        }
+      }
+
+      /* tooltip */
+
+      .tip {
+        position: fixed;
+        z-index: 40;
+        min-width: 148px;
+        max-width: 264px;
+        padding: 8px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-sm);
+        background: var(--surface-2);
+        box-shadow: var(--shadow-pop);
+        color: var(--fg);
+        font-size: var(--fs-xs);
+        pointer-events: none;
+        animation: tip-in 120ms var(--ease-out);
+      }
+
+      .tip[hidden] {
+        display: none;
+      }
+
+      .tip-date {
+        margin-bottom: 4px;
+        font-size: var(--fs-sm);
+        font-weight: 560;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tip-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tip-row > span:first-child {
+        color: var(--fg-3);
+      }
+
+      .tip-sep {
+        height: 1px;
+        margin: 5px 0;
+        background: var(--line);
+      }
+
+      @keyframes tip-in {
+        from {
+          opacity: 0;
+          transform: translateY(2px);
+        }
+      }
+
+      /* ── entrance ──────────────────────────────────────────────────────── */
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+      }
+
+      .enter > * {
+        animation: rise var(--dur-base) var(--ease-spring) both;
+        animation-delay: calc(var(--i, 0) * 32ms);
+      }
+
+      /* ── responsive ────────────────────────────────────────────────────── */
+
+      @media (min-width: 940px) {
+        .main {
+          grid-template-columns: repeat(12, minmax(0, 1fr));
+        }
+
+        .panel {
+          grid-column: span 12;
+        }
+
+        .panel--heat {
+          grid-column: span 7;
+        }
+
+        .panel--fill {
+          grid-column: span 12;
+        }
+
+        .panel--notes {
+          grid-column: span 5;
+        }
+      }
+
+      @media (max-width: 559px) {
+        .bar-main {
+          flex: 1 1 100%;
+        }
+
+        .bar-actions {
+          flex: 1 1 100%;
+          margin-left: 0;
+        }
+
+        .bar-actions .btn {
+          flex: 1 1 0;
+        }
+
+        .field {
+          flex: 1 1 140px;
+        }
+
+        .select {
+          max-width: none;
+        }
+
+        .sess {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .sess-nums {
+          grid-row: auto;
+          justify-content: flex-start;
+        }
+
+        .detail > td {
+          padding-left: 12px;
+        }
+      }
+
+      @media (max-width: 399px) {
+        .kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .detail-row {
+          grid-template-columns: minmax(0, 1fr) minmax(70px, auto);
+        }
+
+        .detail-row .share {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .enter > *,
+        .sk-block::after,
+        .sk-tile::after,
+        .tip {
+          animation: none;
+        }
+
+        .btn,
+        .seg > span,
+        .spread svg,
+        .hc,
+        .select,
+        .btn-quiet,
+        .bar {
+          transition-duration: 1ms;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="view" id="view">
+      <header class="bar" id="bar" data-refresh="false">
+        <div class="bar-main">
+          <h1 class="bar-title" id="title">Token 统计</h1>
+          <p class="bar-sub" id="sub"></p>
+          <p class="bar-meta">
+            <span id="stamp"></span>
+            <span class="badge-warn" id="badge" hidden></span>
+          </p>
+        </div>
+        <div class="bar-actions">
+          <button type="button" class="btn" id="btn-refresh" data-busy="false">
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="lbl-refresh">刷新</span>
+          </button>
+          <button type="button" class="btn btn--solid" id="btn-export" disabled>导出 CSV</button>
+        </div>
+      </header>
+
+      <p class="sr-only" id="status" role="status" aria-live="polite"></p>
+
+      <div class="filters" id="filters">
+        <span class="sr-only" id="lbl-range">时间范围</span>
+        <div class="chips" id="chips" role="radiogroup" aria-labelledby="lbl-range"></div>
+        <label class="field">
+          <span class="field-label" id="lbl-project">项目</span>
+          <span class="select-wrap"><select class="select" id="sel-project"></select></span>
+        </label>
+        <label class="field">
+          <span class="field-label" id="lbl-model">模型</span>
+          <span class="select-wrap"><select class="select" id="sel-model"></select></span>
+        </label>
+        <button type="button" class="btn-quiet" id="btn-clear" hidden>清除筛选</button>
+      </div>
+
+      <main class="main" id="main"></main>
+    </div>
+
+    <div class="tip" id="tip" role="tooltip" hidden></div>
+
+    <script>
+      (function () {
+        "use strict";
+
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        const CHIP_DAYS = [7, 30, 90, 365];
+        const POLL_MS = 60000;
+        const PING_TIMEOUT_MS = 2500;
+        const MAX_AXIS_DAYS = 400;
+        const MAX_DAY_MS = 86400000;
+
+        // ── copy ─────────────────────────────────────────────────────────────
+        // Every visible string (labels, aria labels, tooltips, status, CSV
+        // headers) comes from here. Host-provided `notes` are rendered verbatim
+        // because the plugin process already localized them.
+
+        const COPY = {
+          "zh-CN": {
+            title: "Token 统计",
+            subtitle: (days, from, to) =>
+              from && to ? `最近 ${days} 天 · ${from} → ${to}` : `最近 ${days} 天`,
+            updated: (time) => `更新于 ${time}`,
+            updatedNone: "尚无数据",
+            truncated: "已截断",
+            truncatedTitle: (limit) => `数据量超过上限，只统计了最近 ${limit} 轮`,
+            refresh: "刷新",
+            refreshBusy: "正在刷新",
+            export: "导出 CSV",
+            exportHint: "导出当前的按天 / 按项目 / 按模型数据",
+            exportEmpty: "还没有可导出的数据",
+            rangeLabel: "时间范围",
+            days: (n) => `${n} 天`,
+            project: "项目",
+            model: "模型",
+            allProjects: "全部项目",
+            allModels: "全部模型",
+            clear: "清除筛选",
+            projectFallback: (id) => `项目 #${id}`,
+            groupUsage: "用量",
+            groupRhythm: "节奏",
+            kpiTotal: "总 tokens",
+            kpiTotalSub: (v) => `含缓存读 ${v}`,
+            kpiInput: "输入",
+            kpiOutput: "输出",
+            kpiCacheRead: "缓存读",
+            kpiCacheWrite: "缓存写",
+            kpiReasoning: "推理",
+            kpiTurns: "轮次",
+            kpiSessions: "会话数",
+            kpiActiveDays: "活跃天数",
+            kpiStreak: "连续天数",
+            kpiAvg: "平均每轮",
+            kpiTps: "吞吐",
+            kpiCacheHit: "缓存命中率",
+            kpiProjects: "覆盖项目数",
+            kpiCost: "估算成本",
+            unitTokens: "tokens",
+            estimate: "估算",
+            shareOfTokens: (pct) => `占 ${pct}`,
+            windowDays: (n) => `窗口 ${n} 天`,
+            streakSub: "按自然日",
+            turnsSub: (v) => `${v} 轮/活跃天`,
+            sessionsSub: (v) => `${v} 轮/会话`,
+            avgSub: "tokens / 轮",
+            tpsSub: "tokens/s",
+            cacheHitNone: "没有缓存读",
+            cacheHitSub: "缓存读 ÷（输入 + 缓存读）",
+            projectsSub: (n) => `${n} 个模型`,
+            costSub: (priced, unpriced) => `已计价 ${priced} · 未计价 ${unpriced}`,
+            secKpi: "关键指标",
+            secTrend: "每日趋势",
+            secHeat: "周 × 小时",
+            secProjects: "项目",
+            secModels: "模型",
+            secSessions: "会话 Top",
+            secNotes: "说明",
+            trendMeta: (days, peak) => `${days} 天 · 峰值 ${peak}`,
+            trendFoot: "tokens = 输入 + 输出 + 缓存写 + 推理；缓存读单独统计，不计入 tokens。",
+            trendAria: (n, peak) => `每日 token 堆叠柱状图，共 ${n} 天，单日峰值 ${peak} tokens`,
+            trendSummary: (n, total, peakDay, peak, avg) =>
+              `共 ${n} 天，合计 ${total} tokens；最高是 ${peakDay}，${peak} tokens，日均 ${avg}。聚焦图表后用左右方向键逐日查看。`,
+            heatMeta: (peak) => `峰值 ${peak}`,
+            heatAria: (summary) => `周 × 小时热力图。${summary}`,
+            heatSummary: (day, hour, tokens, total) =>
+              `最忙时段是${day} ${hour}:00，共 ${tokens} tokens；窗口内合计 ${total} tokens。`,
+            heatLess: "少",
+            heatMore: "多",
+            projectsMeta: (n) => `${n} 个项目`,
+            modelsMeta: (n) => `${n} 个模型`,
+            sessionsMeta: (n) => `按 tokens 排序 · ${n} 个`,
+            thName: "名称",
+            thTokens: "tokens",
+            thShare: "占比",
+            thTurns: "轮次",
+            thSessions: "会话",
+            thCacheRead: "缓存读",
+            thLast: "最近活动",
+            thModel: "模型",
+            thProvider: "provider",
+            thAvg: "平均每轮",
+            thTps: "tokens/s",
+            thAmount: "金额",
+            captionProjects: "项目 token 用量，按 tokens 从高到低排序",
+            captionModels: "模型 token 用量，按 tokens 从高到低排序",
+            expand: (name) => `展开 ${name} 的模型分布`,
+            collapse: (name) => `收起 ${name} 的模型分布`,
+            detailTitle: "模型分布",
+            detailTurns: (n) => `${n} 轮`,
+            unpriced: "无单价",
+            unpricedTitle: "该模型没有配置单价，未计入估算成本",
+            sessTurns: (n) => `${n} 轮`,
+            sessEmpty: "这个范围内没有会话记录。",
+            justNow: "刚刚",
+            loading: "正在读取统计…",
+            emptyTitle: "这个时间范围内没有已完成的轮次",
+            emptyBody:
+              "没有数据就不会画图表。可以换一个更长的时间范围，或清除项目 / 模型筛选再试一次。",
+            emptyCta365: "查看最近 365 天",
+            emptyCtaClear: "清除筛选",
+            errorTitle: "读取统计失败",
+            retry: "重试",
+            bannerText: (msg) => `刷新失败：${msg}。当前显示的仍是上一次成功的数据。`,
+            unknownError: "未知错误",
+            statusRefreshing: "正在刷新统计…",
+            statusReady: (time) => `统计已更新，${time}`,
+            statusFailed: "刷新失败",
+            statusEmpty: "这个时间范围内没有数据",
+            noBridge: "宿主桥接不可用，无法读取统计。",
+            csvComment: "#",
+            csvGenerated: (time) => `生成时间 ${time}`,
+            csvDaily: "按天",
+            csvProjects: "按项目",
+            csvModels: "按模型",
+            csvDailyCols: ["日期", "总 tokens", "输入", "输出", "缓存读", "缓存写", "推理", "轮次"],
+            csvProjectCols: ["项目 id", "名称", "tokens", "占比 %", "轮次", "会话", "缓存读", "最近活动"],
+            csvModelCols: [
+              "模型 id",
+              "provider",
+              "tokens",
+              "占比 %",
+              "轮次",
+              "平均每轮",
+              "tokens/s",
+              "缓存读",
+            ],
+            csvAmount: "金额",
+            exportDone: "导出完成",
+            exportFailed: "导出失败：无法创建下载",
+            weekday: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"],
+            scrollHint: "可横向滚动查看更多",
+          },
+          en: {
+            title: "Token Statistics",
+            subtitle: (days, from, to) =>
+              from && to ? `Last ${days} days · ${from} → ${to}` : `Last ${days} days`,
+            updated: (time) => `Updated ${time}`,
+            updatedNone: "No data yet",
+            truncated: "Truncated",
+            truncatedTitle: (limit) => `Capped at the most recent ${limit} turns`,
+            refresh: "Refresh",
+            refreshBusy: "Refreshing",
+            export: "Export CSV",
+            exportHint: "Export daily / project / model tables",
+            exportEmpty: "Nothing to export yet",
+            rangeLabel: "Date range",
+            days: (n) => `${n} d`,
+            project: "Project",
+            model: "Model",
+            allProjects: "All projects",
+            allModels: "All models",
+            clear: "Clear filters",
+            projectFallback: (id) => `Project #${id}`,
+            groupUsage: "Usage",
+            groupRhythm: "Cadence",
+            kpiTotal: "Total tokens",
+            kpiTotalSub: (v) => `incl. cache read ${v}`,
+            kpiInput: "Input",
+            kpiOutput: "Output",
+            kpiCacheRead: "Cache read",
+            kpiCacheWrite: "Cache write",
+            kpiReasoning: "Reasoning",
+            kpiTurns: "Turns",
+            kpiSessions: "Sessions",
+            kpiActiveDays: "Active days",
+            kpiStreak: "Streak",
+            kpiAvg: "Per turn",
+            kpiTps: "Throughput",
+            kpiCacheHit: "Cache hit rate",
+            kpiProjects: "Projects",
+            kpiCost: "Estimated cost",
+            unitTokens: "tokens",
+            estimate: "est.",
+            shareOfTokens: (pct) => `${pct} of tokens`,
+            windowDays: (n) => `${n} d window`,
+            streakSub: "by calendar day",
+            turnsSub: (v) => `${v} turns/active day`,
+            sessionsSub: (v) => `${v} turns/session`,
+            avgSub: "tokens / turn",
+            tpsSub: "tokens/s",
+            cacheHitNone: "no cache reads",
+            cacheHitSub: "cache read ÷ (input + cache read)",
+            projectsSub: (n) => `${n} models`,
+            costSub: (priced, unpriced) => `priced ${priced} · unpriced ${unpriced}`,
+            secKpi: "Key metrics",
+            secTrend: "Daily trend",
+            secHeat: "Weekday × hour",
+            secProjects: "Projects",
+            secModels: "Models",
+            secSessions: "Top sessions",
+            secNotes: "Notes",
+            trendMeta: (days, peak) => `${days} d · peak ${peak}`,
+            trendFoot:
+              "tokens = input + output + cache write + reasoning; cache read is reported separately and not included.",
+            trendAria: (n, peak) => `Stacked daily token bars, ${n} days, peak ${peak} tokens`,
+            trendSummary: (n, total, peakDay, peak, avg) =>
+              `${n} days, ${total} tokens in total; peak is ${peakDay} with ${peak} tokens, ${avg} per day. Focus the chart and use left/right arrows to step through days.`,
+            heatMeta: (peak) => `peak ${peak}`,
+            heatAria: (summary) => `Weekday by hour heat map. ${summary}`,
+            heatSummary: (day, hour, tokens, total) =>
+              `Busiest slot is ${day} ${hour}:00 with ${tokens} tokens; ${total} tokens in the window.`,
+            heatLess: "less",
+            heatMore: "more",
+            projectsMeta: (n) => `${n} projects`,
+            modelsMeta: (n) => `${n} models`,
+            sessionsMeta: (n) => `sorted by tokens · ${n}`,
+            thName: "Name",
+            thTokens: "tokens",
+            thShare: "Share",
+            thTurns: "Turns",
+            thSessions: "Sessions",
+            thCacheRead: "Cache read",
+            thLast: "Last activity",
+            thModel: "Model",
+            thProvider: "provider",
+            thAvg: "Per turn",
+            thTps: "tokens/s",
+            thAmount: "Amount",
+            captionProjects: "Project token usage, sorted by tokens, highest first",
+            captionModels: "Model token usage, sorted by tokens, highest first",
+            expand: (name) => `Expand model breakdown for ${name}`,
+            collapse: (name) => `Collapse model breakdown for ${name}`,
+            detailTitle: "Model breakdown",
+            detailTurns: (n) => `${n} turns`,
+            unpriced: "no rate",
+            unpricedTitle: "No price configured for this model, excluded from the estimate",
+            sessTurns: (n) => `${n} turns`,
+            sessEmpty: "No sessions in this range.",
+            justNow: "just now",
+            loading: "Reading statistics…",
+            emptyTitle: "No completed turns in this range",
+            emptyBody:
+              "Nothing is charted when there is nothing to show. Try a longer range, or clear the project / model filters.",
+            emptyCta365: "Show last 365 days",
+            emptyCtaClear: "Clear filters",
+            errorTitle: "Could not read statistics",
+            retry: "Retry",
+            bannerText: (msg) => `Refresh failed: ${msg}. Showing the last successful snapshot.`,
+            unknownError: "Unknown error",
+            statusRefreshing: "Refreshing statistics…",
+            statusReady: (time) => `Statistics updated at ${time}`,
+            statusFailed: "Refresh failed",
+            statusEmpty: "No data in this range",
+            noBridge: "Host bridge unavailable; statistics cannot be read.",
+            csvComment: "#",
+            csvGenerated: (time) => `generated ${time}`,
+            csvDaily: "by day",
+            csvProjects: "by project",
+            csvModels: "by model",
+            csvDailyCols: ["date", "tokens", "input", "output", "cache read", "cache write", "reasoning", "turns"],
+            csvProjectCols: ["project id", "name", "tokens", "share %", "turns", "sessions", "cache read", "last activity"],
+            csvModelCols: [
+              "model id",
+              "provider",
+              "tokens",
+              "share %",
+              "turns",
+              "tokens per turn",
+              "tokens/s",
+              "cache read",
+            ],
+            csvAmount: "amount",
+            exportDone: "Export started",
+            exportFailed: "Export failed: could not create the download",
+            weekday: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            scrollHint: "Scroll horizontally for more",
+          },
+        };
+
+        const SYMBOLS = { CNY: "¥", USD: "$", EUR: "€", GBP: "£", JPY: "¥", KRW: "₩" };
+
+        // ── state ────────────────────────────────────────────────────────────
+
+        const state = {
+          locale: "zh-CN",
+          base: "dark",
+          appearance: null,
+          days: 30,
+          projectId: null,
+          modelId: null,
+          view: null,
+          axis: [],
+          error: null,
+          inflight: false,
+          seq: 0,
+          barFocus: -1,
+          expanded: new Set(),
+          catalog: { projects: [], models: [] },
+          firstPaint: true,
+          timer: null,
+          chipDays: CHIP_DAYS.slice(),
+        };
+
+        const refs = {
+          bar: document.getElementById("bar"),
+          sub: document.getElementById("sub"),
+          stamp: document.getElementById("stamp"),
+          badge: document.getElementById("badge"),
+          status: document.getElementById("status"),
+          chips: document.getElementById("chips"),
+          lblRange: document.getElementById("lbl-range"),
+          lblProject: document.getElementById("lbl-project"),
+          lblModel: document.getElementById("lbl-model"),
+          project: document.getElementById("sel-project"),
+          model: document.getElementById("sel-model"),
+          clear: document.getElementById("btn-clear"),
+          refresh: document.getElementById("btn-refresh"),
+          refreshLabel: document.getElementById("lbl-refresh"),
+          exportBtn: document.getElementById("btn-export"),
+          main: document.getElementById("main"),
+          tip: document.getElementById("tip"),
+        };
+
+        function C() {
+          return COPY[state.locale] || COPY["zh-CN"];
+        }
+
+        // ── numbers, dates, money ────────────────────────────────────────────
+
+        const fmtCache = new Map();
+
+        function nf(options) {
+          const key = JSON.stringify(options);
+          let formatter = fmtCache.get(key);
+          if (!formatter) {
+            try {
+              formatter = new Intl.NumberFormat(state.locale, options);
+            } catch {
+              formatter = new Intl.NumberFormat("en", options);
+            }
+            fmtCache.set(key, formatter);
+          }
+          return formatter;
+        }
+
+        function nfDate(options) {
+          const key = "date:" + JSON.stringify(options);
+          let formatter = fmtCache.get(key);
+          if (!formatter) {
+            try {
+              formatter = new Intl.DateTimeFormat(state.locale, options);
+            } catch {
+              formatter = new Intl.DateTimeFormat("en", options);
+            }
+            fmtCache.set(key, formatter);
+          }
+          return formatter;
+        }
+
+        function buildFormatters() {
+          fmtCache.clear();
+        }
+
+        function num(value) {
+          const n = Number(value);
+          return Number.isFinite(n) ? n : 0;
+        }
+
+        function posNum(value) {
+          const n = Number(value);
+          return Number.isFinite(n) && n > 0 ? n : 0;
+        }
+
+        function numOrNull(value) {
+          if (value === null || value === undefined || value === "") return null;
+          const n = Number(value);
+          return Number.isFinite(n) ? n : null;
+        }
+
+        function text(value) {
+          return typeof value === "string" ? value : "";
+        }
+
+        function list(value) {
+          return Array.isArray(value) ? value : [];
+        }
+
+        function fmtInt(value) {
+          return nf({ maximumFractionDigits: 0 }).format(num(value));
+        }
+
+        function fmtDec(value, digits) {
+          return nf({ minimumFractionDigits: 0, maximumFractionDigits: digits }).format(num(value));
+        }
+
+        function fmtFixed(value, digits) {
+          return nf({ minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
+            num(value),
+          );
+        }
+
+        function fmtPct(value, digits) {
+          return `${fmtDec(value, digits === undefined ? 1 : digits)}%`;
+        }
+
+        function fmtCompact(value) {
+          const v = num(value);
+          const abs = Math.abs(v);
+          if (abs >= 1e9) return `${fmtDec(v / 1e9, 1)}B`;
+          if (abs >= 1e6) return `${fmtDec(v / 1e6, 1)}M`;
+          if (abs >= 1e4) return `${fmtDec(v / 1e3, 1)}K`;
+          return fmtInt(v);
+        }
+
+        function fmtAxis(value) {
+          const v = num(value);
+          const abs = Math.abs(v);
+          if (abs >= 1e9) return `${fmtDec(v / 1e9, 1)}B`;
+          if (abs >= 1e6) return `${fmtDec(v / 1e6, 1)}M`;
+          if (abs >= 1000) return `${fmtDec(v / 1e3, 1)}K`;
+          return fmtInt(v);
+        }
+
+        function fmtMoney(amount, currency) {
+          const code = text(currency).toUpperCase();
+          const symbol = SYMBOLS[code] !== undefined ? SYMBOLS[code] : code ? `${code} ` : "";
+          const v = num(amount);
+          const abs = Math.abs(v);
+          const digits = abs > 0 && abs < 0.01 ? 4 : abs < 1 ? 3 : 2;
+          return `${symbol}${fmtFixed(v, digits)}`;
+        }
+
+        function fmtDate(ms) {
+          const n = numOrNull(ms);
+          if (n === null) return "";
+          return nfDate({ year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(n));
+        }
+
+        function fmtTime(ms) {
+          const n = numOrNull(ms);
+          if (n === null) return "—";
+          return nfDate({ hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(n));
+        }
+
+        function fmtDayFull(ms) {
+          const n = numOrNull(ms);
+          if (n === null) return "";
+          return nfDate({ year: "numeric", month: "short", day: "numeric", weekday: "short" }).format(
+            new Date(n),
+          );
+        }
+
+        function fmtRelative(ms) {
+          const n = numOrNull(ms);
+          if (n === null) return "—";
+          const diff = n - Date.now();
+          const abs = Math.abs(diff);
+          let formatter;
+          try {
+            formatter = new Intl.RelativeTimeFormat(state.locale, { numeric: "auto" });
+          } catch {
+            formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+          }
+          if (abs < 60000) return C().justNow;
+          if (abs < 3600000) return formatter.format(Math.round(diff / 60000), "minute");
+          if (abs < MAX_DAY_MS) return formatter.format(Math.round(diff / 3600000), "hour");
+          if (abs < 30 * MAX_DAY_MS) return formatter.format(Math.round(diff / MAX_DAY_MS), "day");
+          if (abs < 365 * MAX_DAY_MS) {
+            return formatter.format(Math.round(diff / (30 * MAX_DAY_MS)), "month");
+          }
+          return formatter.format(Math.round(diff / (365 * MAX_DAY_MS)), "year");
+        }
+
+        function pad2(n) {
+          return n < 10 ? `0${n}` : String(n);
+        }
+
+        function keyOf(date) {
+          return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+        }
+
+        function parseKey(key) {
+          const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text(key));
+          if (!match) return null;
+          return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+        }
+
+        function addDays(date, amount) {
+          return new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount);
+        }
+
+        function mdLabel(date) {
+          return nfDate({ month: "2-digit", day: "2-digit" }).format(date);
+        }
+
+        // ── DOM helpers ──────────────────────────────────────────────────────
+
+        function el(tag, options, children) {
+          const node = document.createElement(tag);
+          applyOptions(node, options);
+          appendAll(node, children);
+          return node;
+        }
+
+        function svgEl(tag, attributes, children) {
+          const node = document.createElementNS(SVG_NS, tag);
+          if (attributes) {
+            for (const key of Object.keys(attributes)) {
+              const value = attributes[key];
+              if (value === null || value === undefined || value === false) continue;
+              node.setAttribute(key, String(value));
+            }
+          }
+          appendAll(node, children);
+          return node;
+        }
+
+        function applyOptions(node, options) {
+          if (!options) return;
+          if (options.cls) node.setAttribute("class", options.cls);
+          if (options.text !== undefined && options.text !== null) node.textContent = options.text;
+          if (options.attr) {
+            for (const key of Object.keys(options.attr)) {
+              const value = options.attr[key];
+              if (value === null || value === undefined || value === false) continue;
+              node.setAttribute(key, String(value));
+            }
+          }
+          if (options.style) {
+            for (const key of Object.keys(options.style)) {
+              node.style.setProperty(key, options.style[key]);
+            }
+          }
+          if (options.on) {
+            for (const key of Object.keys(options.on)) {
+              node.addEventListener(key, options.on[key]);
+            }
+          }
+        }
+
+        function appendAll(node, children) {
+          if (!children) return;
+          for (const child of children) {
+            if (child) node.appendChild(child);
+          }
+        }
+
+        function clearNode(node) {
+          while (node.firstChild) node.removeChild(node.firstChild);
+        }
+
+        function txt(value) {
+          return document.createTextNode(String(value));
+        }
+
+        // ── normalization (never trust the payload) ───────────────────────────
+
+        function normalize(raw) {
+          const src = raw && typeof raw === "object" ? raw : {};
+          const rawTotals = src.totals && typeof src.totals === "object" ? src.totals : {};
+          const rawWindow = src.window && typeof src.window === "object" ? src.window : {};
+          const rawSettings = src.settings && typeof src.settings === "object" ? src.settings : {};
+          const rawFilters = src.filters && typeof src.filters === "object" ? src.filters : {};
+          const rawTrunc = src.truncated && typeof src.truncated === "object" ? src.truncated : {};
+
+          const totals = {
+            tokens: posNum(rawTotals.tokens),
+            tokensWithCacheRead: posNum(rawTotals.tokensWithCacheRead),
+            input: posNum(rawTotals.input),
+            output: posNum(rawTotals.output),
+            cacheRead: posNum(rawTotals.cacheRead),
+            cacheWrite: posNum(rawTotals.cacheWrite),
+            reasoning: posNum(rawTotals.reasoning),
+            turns: posNum(rawTotals.turns),
+            sessions: posNum(rawTotals.sessions),
+            projects: posNum(rawTotals.projects),
+            models: posNum(rawTotals.models),
+            activeDays: posNum(rawTotals.activeDays),
+            streak: posNum(rawTotals.streak),
+            avgPerTurn: posNum(rawTotals.avgPerTurn),
+            tokensPerSecond: posNum(rawTotals.tokensPerSecond),
+            cacheHitRate:
+              rawTotals.cacheHitRate === null || rawTotals.cacheHitRate === undefined
+                ? null
+                : numOrNull(rawTotals.cacheHitRate),
+            firstAt: numOrNull(rawTotals.firstAt),
+            lastAt: numOrNull(rawTotals.lastAt),
+          };
+          if (!totals.tokensWithCacheRead) totals.tokensWithCacheRead = totals.tokens + totals.cacheRead;
+
+          const totalTokens = totals.tokens;
+
+          const days = list(src.days)
+            .map((row) => {
+              const date = text(row && row.date);
+              return {
+                date,
+                tokens: posNum(row && row.tokens),
+                input: posNum(row && row.input),
+                output: posNum(row && row.output),
+                cacheRead: posNum(row && row.cacheRead),
+                cacheWrite: posNum(row && row.cacheWrite),
+                reasoning: posNum(row && row.reasoning),
+                turns: posNum(row && row.turns),
+              };
+            })
+            .filter((row) => parseKey(row.date) !== null)
+            .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+          const heat = [];
+          const rawHeat = list(src.heat);
+          for (let day = 0; day < 7; day += 1) {
+            const row = list(rawHeat[day]);
+            const values = [];
+            for (let hour = 0; hour < 24; hour += 1) values.push(posNum(row[hour]));
+            heat.push(values);
+          }
+
+          const projects = list(src.projects)
+            .map((row) => {
+              const id = numOrNull(row && row.id);
+              const name = text(row && row.name).trim();
+              return {
+                id,
+                name: name || null,
+                label: text(row && row.label).trim() || null,
+                tokens: posNum(row && row.tokens),
+                input: posNum(row && row.input),
+                output: posNum(row && row.output),
+                cacheRead: posNum(row && row.cacheRead),
+                cacheWrite: posNum(row && row.cacheWrite),
+                reasoning: posNum(row && row.reasoning),
+                turns: posNum(row && row.turns),
+                sessions: posNum(row && row.sessions),
+                share: numOrNull(row && row.share),
+                firstAt: numOrNull(row && row.firstAt),
+                lastAt: numOrNull(row && row.lastAt),
+                models: list(row && row.models)
+                  .map((model) => ({
+                    modelId: text(model && model.modelId) || "unknown",
+                    tokens: posNum(model && model.tokens),
+                    turns: posNum(model && model.turns),
+                  }))
+                  .filter((model) => model.tokens > 0 || model.turns > 0)
+                  .sort((a, b) => b.tokens - a.tokens),
+              };
+            })
+            .filter((row) => row.id !== null)
+            .sort((a, b) => b.tokens - a.tokens);
+
+          const models = list(src.models)
+            .map((row) => {
+              const id = text(row && row.id).trim();
+              return {
+                id: id || "unknown",
+                providerId: text(row && row.providerId).trim() || null,
+                tokens: posNum(row && row.tokens),
+                input: posNum(row && row.input),
+                output: posNum(row && row.output),
+                cacheRead: posNum(row && row.cacheRead),
+                cacheWrite: posNum(row && row.cacheWrite),
+                reasoning: posNum(row && row.reasoning),
+                turns: posNum(row && row.turns),
+                share: numOrNull(row && row.share),
+                avgPerTurn: posNum(row && row.avgPerTurn),
+                tokensPerSecond: posNum(row && row.tokensPerSecond),
+              };
+            })
+            .sort((a, b) => b.tokens - a.tokens);
+
+          const sessions = list(src.sessions)
+            .map((row) => ({
+              sessionId: text(row && row.sessionId),
+              title: text(row && row.title).trim() || null,
+              projectId: numOrNull(row && row.projectId),
+              projectName: text(row && row.projectName).trim() || null,
+              modelId: text(row && row.modelId).trim() || null,
+              turns: posNum(row && row.turns),
+              tokens: posNum(row && row.tokens),
+              lastAt: numOrNull(row && row.lastAt),
+            }))
+            .sort((a, b) => b.tokens - a.tokens);
+
+          const cost = normalizeCost(src.cost);
+          const notes = list(src.notes)
+            .map((note) => (typeof note === "string" ? note : text(note)))
+            .filter((note) => note.trim().length > 0);
+
+          for (const project of projects) {
+            if (project.share === null) {
+              project.share = totalTokens > 0 ? (project.tokens / totalTokens) * 100 : 0;
+            }
+          }
+          for (const model of models) {
+            if (model.share === null) {
+              model.share = totalTokens > 0 ? (model.tokens / totalTokens) * 100 : 0;
+            }
+          }
+
+          return {
+            generatedAt: numOrNull(src.generatedAt ? Date.parse(src.generatedAt) : null),
+            window: {
+              days: posNum(rawWindow.days) || state.days,
+              fromMs: numOrNull(rawWindow.fromMs),
+              requestedFromMs: numOrNull(rawWindow.requestedFromMs),
+              toMs: numOrNull(rawWindow.toMs),
+            },
+            truncated: {
+              hits: rawTrunc.hits === true,
+              limit: posNum(rawTrunc.limit),
+              pages: posNum(rawTrunc.pages),
+            },
+            filters: {
+              projectId: numOrNull(rawFilters.projectId),
+              modelId: text(rawFilters.modelId).trim() || null,
+            },
+            settings: {
+              currency: text(rawSettings.currency).toUpperCase() || null,
+              defaultDays: posNum(rawSettings.defaultDays) || 30,
+              maxTurns: posNum(rawSettings.maxTurns),
+              ratesConfigured: posNum(rawSettings.ratesConfigured),
+            },
+            totals,
+            days,
+            heat,
+            projects,
+            models,
+            sessions,
+            cost,
+            notes,
+          };
+        }
+
+        function normalizeCost(raw) {
+          if (!raw || typeof raw !== "object") return null;
+          const total = numOrNull(raw.total);
+          if (total === null) return null;
+          const byModel = list(raw.byModel)
+            .map((row) => ({
+              modelId: text(row && row.modelId) || "unknown",
+              tokens: posNum(row && row.tokens),
+              amount: num(row && row.amount),
+              share: posNum(row && row.share),
+            }))
+            .sort((a, b) => b.amount - a.amount);
+          return {
+            currency: text(raw.currency).toUpperCase() || null,
+            total,
+            pricedTokens: posNum(raw.pricedTokens),
+            unpricedTokens: posNum(raw.unpricedTokens),
+            byModel,
+            unpricedModels: list(raw.unpricedModels).map((id) => text(id)).filter(Boolean),
+          };
+        }
+
+        // ── day axis ─────────────────────────────────────────────────────────
+
+        function buildDayAxis(view) {
+          const byKey = new Map();
+          for (const day of view.days) byKey.set(day.date, day);
+
+          let endDate = view.window.toMs !== null ? new Date(view.window.toMs) : new Date();
+          endDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+          let startDate =
+            view.window.fromMs !== null ? new Date(view.window.fromMs) : new Date(endDate.getTime());
+          startDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+
+          if (view.days.length > 0) {
+            const first = parseKey(view.days[0].date);
+            const last = parseKey(view.days[view.days.length - 1].date);
+            if (first && first.getTime() < startDate.getTime()) startDate = first;
+            if (last && last.getTime() > endDate.getTime()) endDate = last;
+          }
+          if (startDate.getTime() > endDate.getTime()) {
+            const swap = startDate;
+            startDate = endDate;
+            endDate = swap;
+          }
+
+          const slots = [];
+          let cursor = startDate;
+          while (cursor.getTime() <= endDate.getTime() && slots.length < MAX_AXIS_DAYS) {
+            const key = keyOf(cursor);
+            const row = byKey.get(key);
+            slots.push({
+              key,
+              date: cursor,
+              tokens: row ? row.tokens : 0,
+              input: row ? row.input : 0,
+              output: row ? row.output : 0,
+              cacheRead: row ? row.cacheRead : 0,
+              cacheWrite: row ? row.cacheWrite : 0,
+              reasoning: row ? row.reasoning : 0,
+              turns: row ? row.turns : 0,
+              hasData: Boolean(row),
+            });
+            cursor = addDays(cursor, 1);
+          }
+
+          if (slots.length >= MAX_AXIS_DAYS) {
+            const trimmed = slots.slice(slots.length - MAX_AXIS_DAYS);
+            slots.length = 0;
+            slots.push(...trimmed);
+          }
+
+          if (state.barFocus >= slots.length) state.barFocus = slots.length - 1;
+          return slots;
+        }
+
+        function niceScale(max) {
+          if (!(max > 0)) return { top: 1, ticks: [0, 1] };
+          const rough = max / 3;
+          const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+          const normalized = rough / magnitude;
+          let step;
+          if (normalized <= 1) step = 1;
+          else if (normalized <= 2) step = 2;
+          else if (normalized <= 2.5) step = 2.5;
+          else if (normalized <= 5) step = 5;
+          else step = 10;
+          step *= magnitude;
+          const top = Math.ceil(max / step) * step;
+          const ticks = [];
+          for (let value = 0; value <= top + step * 0.001; value += step) ticks.push(value);
+          return { top, ticks };
+        }
+
+        // ── tooltip ──────────────────────────────────────────────────────────
+
+        function positionTip(clientX, clientY) {
+          const tip = refs.tip;
+          const rect = tip.getBoundingClientRect();
+          const gap = 12;
+          let left = clientX + gap;
+          let top = clientY - rect.height - gap;
+          if (left + rect.width > window.innerWidth - 8) left = clientX - rect.width - gap;
+          if (left < 8) left = 8;
+          if (top < 8) top = clientY + gap;
+          if (top + rect.height > window.innerHeight - 8) {
+            top = Math.max(8, window.innerHeight - rect.height - 8);
+          }
+          tip.style.left = `${Math.round(left)}px`;
+          tip.style.top = `${Math.round(top)}px`;
+        }
+
+        function showTipFor(key, build, clientX, clientY) {
+          const tip = refs.tip;
+          if (tip.dataset.key !== key) {
+            clearNode(tip);
+            tip.appendChild(build());
+            tip.dataset.key = key;
+          }
+          tip.hidden = false;
+          positionTip(clientX, clientY);
+        }
+
+        function hideTip() {
+          const tip = refs.tip;
+          tip.hidden = true;
+          tip.removeAttribute("data-key");
+          clearNode(tip);
+        }
+
+        function tipRow(label, value) {
+          return el("div", { cls: "tip-row" }, [
+            el("span", { text: label }),
+            el("span", { text: value }),
+          ]);
+        }
+
+        function tipDayContent(slot) {
+          const copy = C();
+          const box = el("div");
+          box.appendChild(el("div", { cls: "tip-date", text: fmtDayFull(slot.date.getTime()) }));
+          box.appendChild(tipRow(copy.kpiTotal, fmtInt(slot.tokens)));
+          box.appendChild(el("div", { cls: "tip-sep" }));
+          box.appendChild(tipRow(copy.kpiInput, fmtInt(slot.input)));
+          box.appendChild(tipRow(copy.kpiOutput, fmtInt(slot.output)));
+          box.appendChild(tipRow(copy.kpiCacheRead, fmtInt(slot.cacheRead)));
+          box.appendChild(tipRow(copy.kpiCacheWrite, fmtInt(slot.cacheWrite)));
+          box.appendChild(tipRow(copy.kpiReasoning, fmtInt(slot.reasoning)));
+          box.appendChild(el("div", { cls: "tip-sep" }));
+          box.appendChild(tipRow(copy.kpiTurns, fmtInt(slot.turns)));
+          return box;
+        }
+
+        function dayAriaLabel(slot) {
+          const copy = C();
+          return [
+            fmtDayFull(slot.date.getTime()),
+            `${copy.kpiTotal} ${fmtInt(slot.tokens)}`,
+            `${copy.kpiInput} ${fmtInt(slot.input)}`,
+            `${copy.kpiOutput} ${fmtInt(slot.output)}`,
+            `${copy.kpiCacheRead} ${fmtInt(slot.cacheRead)}`,
+            `${copy.kpiCacheWrite} ${fmtInt(slot.cacheWrite)}`,
+            `${copy.kpiReasoning} ${fmtInt(slot.reasoning)}`,
+            `${copy.kpiTurns} ${fmtInt(slot.turns)}`,
+          ].join(" · ");
+        }
+
+        // ── static copy ──────────────────────────────────────────────────────
+
+        function applyCopy() {
+          const copy = C();
+          document.documentElement.lang = state.locale;
+          document.title = copy.title;
+          document.getElementById("title").textContent = copy.title;
+          refs.refreshLabel.textContent = copy.refresh;
+          refs.exportBtn.textContent = copy.export;
+          refs.lblRange.textContent = copy.rangeLabel;
+          refs.lblProject.textContent = copy.project;
+          refs.lblModel.textContent = copy.model;
+          refs.clear.textContent = copy.clear;
+          refs.refresh.setAttribute("aria-label", copy.refresh);
+          refs.exportBtn.setAttribute("aria-label", copy.export);
+        }
+
+        // ── header ───────────────────────────────────────────────────────────
+
+        function renderHeader() {
+          const copy = C();
+          const view = state.view;
+          const days = view ? view.window.days : state.days;
+          const from = view ? fmtDate(view.window.fromMs) : "";
+          const to = view ? fmtDate(view.window.toMs) : "";
+          refs.sub.textContent = copy.subtitle(days, from, to);
+
+          if (view && view.generatedAt !== null) {
+            refs.stamp.textContent = copy.updated(fmtTime(view.generatedAt));
+          } else {
+            refs.stamp.textContent = copy.updatedNone;
+          }
+
+          const truncated = Boolean(view && view.truncated.hits);
+          refs.badge.hidden = !truncated;
+          if (truncated) {
+            refs.badge.textContent = copy.truncated;
+            refs.badge.setAttribute(
+              "title",
+              copy.truncatedTitle(view.truncated.limit || view.settings.maxTurns || 0),
+            );
+          } else {
+            refs.badge.removeAttribute("title");
+          }
+        }
+
+        // ── filters ──────────────────────────────────────────────────────────
+
+        function renderFilters() {
+          const copy = C();
+          renderChips();
+          syncCheckedChip();
+          syncSelect(refs.project, projectOptions(), state.projectId === null ? "" : String(state.projectId), copy.allProjects);
+          syncSelect(refs.model, modelOptions(), state.modelId === null ? "" : state.modelId, copy.allModels);
+          const active = state.projectId !== null || state.modelId !== null;
+          refs.clear.hidden = !active;
+          refs.project.setAttribute("aria-label", copy.project);
+          refs.model.setAttribute("aria-label", copy.model);
+        }
+
+        function renderChips() {
+          const copy = C();
+          const wanted = state.chipDays.join(",");
+          if (refs.chips.dataset.sig === wanted && state.locale === refs.chips.dataset.locale) {
+            return;
+          }
+          refs.chips.dataset.sig = wanted;
+          refs.chips.dataset.locale = state.locale;
+          clearNode(refs.chips);
+          for (const days of state.chipDays) {
+            const input = el("input", {
+              attr: {
+                type: "radio",
+                name: "stats-days",
+                value: String(days),
+                "aria-label": copy.days(days),
+              },
+              on: {
+                change: () => {
+                  if (input.checked) setDays(days);
+                },
+              },
+            });
+            if (days === state.days) input.checked = true;
+            refs.chips.appendChild(
+              el("label", { cls: "seg" }, [input, el("span", { text: copy.days(days) })]),
+            );
+          }
+        }
+
+        function syncCheckedChip() {
+          const inputs = refs.chips.querySelectorAll("input");
+          for (const input of inputs) input.checked = Number(input.value) === state.days;
+        }
+
+        function projectOptions() {
+          const copy = C();
+          const seen = new Set();
+          const options = [{ value: "", label: copy.allProjects }];
+          for (const entry of state.catalog.projects) {
+            const value = String(entry.id);
+            if (seen.has(value)) continue;
+            seen.add(value);
+            options.push({ value, label: entry.name || entry.label || copy.projectFallback(entry.id) });
+          }
+          if (state.projectId !== null && !seen.has(String(state.projectId))) {
+            options.push({ value: String(state.projectId), label: copy.projectFallback(state.projectId) });
+          }
+          return options;
+        }
+
+        function modelOptions() {
+          const copy = C();
+          const seen = new Set();
+          const options = [{ value: "", label: copy.allModels }];
+          for (const entry of state.catalog.models) {
+            const value = entry.id;
+            if (seen.has(value)) continue;
+            seen.add(value);
+            options.push({ value, label: value });
+          }
+          if (state.modelId !== null && !seen.has(state.modelId)) {
+            options.push({ value: state.modelId, label: state.modelId });
+          }
+          return options;
+        }
+
+        function syncSelect(select, options, value, allLabel) {
+          const signature = `${state.locale}|${allLabel}|${options.map((o) => `${o.value}\u0001${o.label}`).join("\u0002")}`;
+          if (select.dataset.sig !== signature) {
+            select.dataset.sig = signature;
+            clearNode(select);
+            for (const option of options) {
+              const node = el("option", { text: option.label, attr: { value: option.value } });
+              select.appendChild(node);
+            }
+          }
+          if (select.value !== value) select.value = value;
+        }
+
+        function mergeCatalog(view) {
+          // A payload answered under a project/model filter is narrowed, so it
+          // may not be used to rebuild the option list. The catalog is a union
+          // of everything this view has seen, which keeps the selects usable
+          // while one of the two filters is active.
+          if (view.projects.length > 1) {
+            state.catalog.projects = mergeById(
+              view.projects.map((project) => ({
+                id: project.id,
+                name: project.name,
+                label: project.label,
+              })),
+              state.catalog.projects,
+            );
+          }
+          if (view.models.length > 1) {
+            state.catalog.models = mergeById(
+              view.models.map((model) => ({ id: model.id })),
+              state.catalog.models,
+            );
+          }
+          if (
+            state.projectId !== null &&
+            !state.catalog.projects.some((project) => project.id === state.projectId)
+          ) {
+            state.catalog.projects = [
+              ...state.catalog.projects,
+              { id: state.projectId, name: null, label: null },
+            ];
+          }
+          if (state.modelId !== null && !state.catalog.models.some((model) => model.id === state.modelId)) {
+            state.catalog.models = [...state.catalog.models, { id: state.modelId }];
+          }
+        }
+
+        function mergeById(primary, previous) {
+          const out = primary.slice();
+          const seen = new Set(primary.map((item) => item.id));
+          for (const item of previous) {
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+            out.push(item);
+          }
+          return out;
+        }
+
+        // ── KPI ──────────────────────────────────────────────────────────────
+
+        function kpiTile(label, value, sub, options) {
+          const opts = options || {};
+          const labelNode = el("div", { cls: "kpi-label" }, [el("span", { text: label })]);
+          if (opts.tag) labelNode.appendChild(el("span", { cls: "tag", text: opts.tag }));
+          const node = el("div", { cls: opts.cls ? `kpi ${opts.cls}` : "kpi" }, [
+            labelNode,
+            el("div", { cls: "kpi-value", text: value }),
+          ]);
+          if (sub) node.appendChild(el("div", { cls: "kpi-sub", text: sub, attr: { title: sub } }));
+          if (opts.title) node.setAttribute("title", opts.title);
+          return node;
+        }
+
+        function renderKpis() {
+          const copy = C();
+          const view = state.view;
+          const totals = view.totals;
+          const days = view.window.days || state.days;
+          const usage = el("div", { cls: "kpi-grid" });
+          const rhythm = el("div", { cls: "kpi-grid" });
+
+          const share = (part, whole) => (whole > 0 ? fmtPct((part / whole) * 100) : "—");
+
+          usage.appendChild(
+            kpiTile(copy.kpiTotal, fmtInt(totals.tokens), copy.kpiTotalSub(fmtCompact(totals.tokensWithCacheRead))),
+          );
+          usage.appendChild(
+            kpiTile(copy.kpiInput, fmtInt(totals.input), copy.shareOfTokens(share(totals.input, totals.tokens))),
+          );
+          usage.appendChild(
+            kpiTile(copy.kpiOutput, fmtInt(totals.output), copy.shareOfTokens(share(totals.output, totals.tokens))),
+          );
+          usage.appendChild(
+            kpiTile(
+              copy.kpiCacheRead,
+              fmtInt(totals.cacheRead),
+              copy.shareOfTokens(share(totals.cacheRead, totals.tokensWithCacheRead)),
+            ),
+          );
+          usage.appendChild(
+            kpiTile(
+              copy.kpiCacheWrite,
+              fmtInt(totals.cacheWrite),
+              copy.shareOfTokens(share(totals.cacheWrite, totals.tokens)),
+            ),
+          );
+          usage.appendChild(
+            kpiTile(
+              copy.kpiReasoning,
+              fmtInt(totals.reasoning),
+              copy.shareOfTokens(share(totals.reasoning, totals.tokens)),
+            ),
+          );
+          if (view.cost) {
+            usage.appendChild(
+              kpiTile(
+                copy.kpiCost,
+                fmtMoney(view.cost.total, view.cost.currency || view.settings.currency),
+                copy.costSub(fmtCompact(view.cost.pricedTokens), fmtCompact(view.cost.unpricedTokens)),
+                { cls: "kpi--cost", tag: copy.estimate },
+              ),
+            );
+          }
+
+          const turnsPerDay = totals.activeDays > 0 ? totals.turns / totals.activeDays : 0;
+          const turnsPerSession = totals.sessions > 0 ? totals.turns / totals.sessions : 0;
+          rhythm.appendChild(
+            kpiTile(copy.kpiTurns, fmtInt(totals.turns), totals.activeDays > 0 ? copy.turnsSub(fmtDec(turnsPerDay, 1)) : ""),
+          );
+          rhythm.appendChild(
+            kpiTile(
+              copy.kpiSessions,
+              fmtInt(totals.sessions),
+              totals.sessions > 0 ? copy.sessionsSub(fmtDec(turnsPerSession, 1)) : "",
+            ),
+          );
+          rhythm.appendChild(kpiTile(copy.kpiActiveDays, fmtInt(totals.activeDays), copy.windowDays(days)));
+          rhythm.appendChild(kpiTile(copy.kpiStreak, fmtInt(totals.streak), copy.streakSub));
+          rhythm.appendChild(kpiTile(copy.kpiAvg, fmtInt(Math.round(totals.avgPerTurn)), copy.avgSub));
+          rhythm.appendChild(
+            kpiTile(copy.kpiTps, fmtDec(totals.tokensPerSecond, 1), copy.tpsSub),
+          );
+          rhythm.appendChild(
+            kpiTile(
+              copy.kpiCacheHit,
+              totals.cacheHitRate === null ? "—" : fmtPct(totals.cacheHitRate),
+              totals.cacheHitRate === null ? copy.cacheHitNone : copy.cacheHitSub,
+            ),
+          );
+          rhythm.appendChild(
+            kpiTile(copy.kpiProjects, fmtInt(totals.projects), copy.projectsSub(fmtInt(totals.models))),
+          );
+
+          const body = el("div", {}, [
+            el("p", { cls: "kpi-group-label", text: copy.groupUsage }),
+            el("div", { cls: "kpi-wrap" }, [usage]),
+            el("p", { cls: "kpi-group-label", text: copy.groupRhythm }),
+            el("div", { cls: "kpi-wrap" }, [rhythm]),
+          ]);
+          return panel("kpi", copy.secKpi, "", body);
+        }
+
+        // ── panel helper ─────────────────────────────────────────────────────
+
+        function panel(kind, title, meta, body, options) {
+          const opts = options || {};
+          const heading = el("h2", { text: title, attr: { id: `h-${kind}` } });
+          const head = el("div", { cls: "panel-head" }, [heading]);
+          if (meta) head.appendChild(el("p", { cls: "panel-meta", text: meta }));
+          let cls = `panel panel--${kind}`;
+          if (opts.extraClass) cls += ` ${opts.extraClass}`;
+          const section = el("section", { cls, attr: { "aria-labelledby": `h-${kind}` } }, [head, body]);
+          return section;
+        }
+
+        // ── trend ────────────────────────────────────────────────────────────
+
+        function renderTrend(measuredWidth) {
+          const copy = C();
+          const host = el("div", { cls: "trend-host" });
+          const slots = state.axis;
+          const total = state.view.totals.tokens;
+
+          if (!slots.length) {
+            host.appendChild(el("p", { cls: "state-body", text: copy.loading }));
+            return host;
+          }
+
+          const peak = slots.reduce((best, slot) => (slot.tokens > best.tokens ? slot : best), slots[0]);
+          const daily = slots.map((slot) => slot.input + slot.output + slot.cacheRead);
+          const maxValue = daily.reduce((a, b) => Math.max(a, b), 0);
+          const scale = niceScale(maxValue);
+          const fallback = Math.max(260, refs.main.clientWidth - 44);
+          const width = Math.max(240, Math.round(measuredWidth || host.clientWidth || fallback));
+          const height = Math.min(210, Math.max(140, Math.round(width * 0.42)));
+          const box = { t: 10, r: 6, b: 22, l: 42 };
+          const plotW = Math.max(60, width - box.l - box.r);
+          const plotH = Math.max(50, height - box.t - box.b);
+          const count = slots.length;
+          const slotW = plotW / count;
+          const barW = Math.max(1, Math.min(24, slotW * 0.66));
+          const yOf = (value) => box.t + plotH - (value / scale.top) * plotH;
+
+          const root = svgEl("svg", {
+            class: "trend-svg",
+            viewBox: `0 0 ${width} ${height}`,
+            width,
+            height,
+            role: "group",
+            "aria-label": copy.trendAria(count, fmtInt(peak.tokens)),
+            "aria-describedby": "trend-summary",
+          });
+
+          for (const tick of scale.ticks) {
+            const y = Math.round(yOf(tick)) + 0.5;
+            root.appendChild(
+              svgEl("line", { class: "axis-grid", x1: box.l, x2: box.l + plotW, y1: y, y2: y }),
+            );
+            root.appendChild(
+              svgEl("text", { class: "axis-text", x: box.l - 7, y: y + 3.5, "text-anchor": "end" }, [
+                txt(fmtAxis(tick)),
+              ]),
+            );
+          }
+          root.appendChild(
+            svgEl("line", {
+              class: "axis-base",
+              x1: box.l,
+              x2: box.l + plotW,
+              y1: box.t + plotH + 0.5,
+              y2: box.t + plotH + 0.5,
+            }),
+          );
+
+          const bars = svgEl("g", { class: "bars" });
+          for (let index = 0; index < count; index += 1) {
+            const slot = slots[index];
+            const x0 = box.l + index * slotW;
+            const barX = x0 + (slotW - barW) / 2;
+            const isTabStop = state.barFocus >= 0 ? index === state.barFocus : index === count - 1;
+            const group = svgEl("g", {
+              class: "day-bar",
+              "data-i": index,
+              tabindex: isTabStop ? "0" : "-1",
+              role: "img",
+              "aria-label": dayAriaLabel(slot),
+            });
+            group.appendChild(
+              svgEl("rect", { class: "bar-hit", x: x0, y: box.t, width: Math.max(1, slotW), height: plotH }),
+            );
+            let cursorY = box.t + plotH;
+            const segments = [
+              ["input", slot.input, "seg seg-input"],
+              ["output", slot.output, "seg seg-output"],
+              ["cacheRead", slot.cacheRead, "seg seg-cache"],
+            ];
+            for (const [, value, cls] of segments) {
+              if (value <= 0) continue;
+              const segHeight = (value / scale.top) * plotH;
+              cursorY -= segHeight;
+              group.appendChild(
+                svgEl("rect", {
+                  class: cls,
+                  x: barX,
+                  y: cursorY,
+                  width: barW,
+                  height: Math.max(0.75, segHeight),
+                }),
+              );
+            }
+            if (daily[index] <= 0) {
+              group.appendChild(
+                svgEl("rect", {
+                  class: "seg-zero",
+                  x: barX,
+                  y: box.t + plotH - 1,
+                  width: barW,
+                  height: 1,
+                }),
+              );
+            }
+            bars.appendChild(group);
+          }
+          root.appendChild(bars);
+
+          const hoverCol = svgEl("rect", {
+            class: "hover-col",
+            x: box.l,
+            y: box.t,
+            width: 0,
+            height: plotH,
+            visibility: "hidden",
+          });
+          root.appendChild(hoverCol);
+
+          const hit = svgEl("rect", {
+            class: "plot-hit",
+            x: box.l,
+            y: box.t,
+            width: plotW,
+            height: plotH,
+            fill: "transparent",
+          });
+          root.appendChild(hit);
+
+          const indexAt = (event) => {
+            const bounds = root.getBoundingClientRect();
+            if (bounds.width <= 0) return -1;
+            const scaleX = width / bounds.width;
+            const localX = (event.clientX - bounds.left) * scaleX;
+            if (localX < box.l || localX > box.l + plotW) return -1;
+            return Math.max(0, Math.min(count - 1, Math.floor((localX - box.l) / slotW)));
+          };
+
+          const markColumn = (index) => {
+            if (index < 0) {
+              hoverCol.setAttribute("visibility", "hidden");
+              return;
+            }
+            const x = box.l + index * slotW;
+            hoverCol.setAttribute("x", String(x));
+            hoverCol.setAttribute("width", String(Math.max(1, slotW)));
+            hoverCol.setAttribute("visibility", "visible");
+          };
+
+          hit.addEventListener("pointermove", (event) => {
+            const index = indexAt(event);
+            if (index < 0) {
+              hideTip();
+              markColumn(-1);
+              return;
+            }
+            markColumn(index);
+            showTipFor(`d:${slots[index].key}`, () => tipDayContent(slots[index]), event.clientX, event.clientY);
+          });
+          hit.addEventListener("pointerleave", () => {
+            hideTip();
+            markColumn(-1);
+          });
+          hit.addEventListener("click", (event) => {
+            const index = indexAt(event);
+            if (index < 0) return;
+            state.barFocus = index;
+            const target = bars.querySelector(`[data-i="${index}"]`);
+            if (target) {
+              for (const bar of bars.children) bar.setAttribute("tabindex", bar === target ? "0" : "-1");
+              target.focus();
+            }
+          });
+
+          const focusBar = (index) => {
+            const clamped = Math.max(0, Math.min(count - 1, index));
+            state.barFocus = clamped;
+            const target = bars.querySelector(`[data-i="${clamped}"]`);
+            if (!target) return;
+            for (const bar of bars.children) bar.setAttribute("tabindex", bar === target ? "0" : "-1");
+            target.focus();
+          };
+
+          root.addEventListener("keydown", (event) => {
+            let next = null;
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (state.barFocus < 0 ? count - 1 : state.barFocus) + 1;
+            else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (state.barFocus < 0 ? count - 1 : state.barFocus) - 1;
+            else if (event.key === "Home") next = 0;
+            else if (event.key === "End") next = count - 1;
+            if (next === null) return;
+            event.preventDefault();
+            focusBar(next);
+          });
+
+          bars.addEventListener("focusin", (event) => {
+            const group = event.target && event.target.closest ? event.target.closest(".day-bar") : null;
+            if (!group) return;
+            const index = Number(group.getAttribute("data-i"));
+            if (!Number.isFinite(index)) return;
+            state.barFocus = index;
+            markColumn(index);
+            const bounds = group.getBoundingClientRect();
+            showTipFor(
+              `d:${slots[index].key}`,
+              () => tipDayContent(slots[index]),
+              Math.max(8, bounds.left + Math.min(bounds.width, 24)),
+              Math.max(60, bounds.top + 40),
+            );
+          });
+          bars.addEventListener("focusout", () => {
+            hideTip();
+            markColumn(-1);
+          });
+
+          const maxTicks = Math.max(2, Math.min(6, Math.floor(plotW / 74)));
+          const tickCount = Math.min(maxTicks, count);
+          const used = new Set();
+          for (let k = 0; k < tickCount; k += 1) {
+            used.add(Math.round((k * (count - 1)) / Math.max(1, tickCount - 1)));
+          }
+          for (const index of Array.from(used).sort((a, b) => a - b)) {
+            const middle = box.l + index * slotW + slotW / 2;
+            const anchor = index === 0 ? "start" : index === count - 1 ? "end" : "middle";
+            const x = index === 0 ? box.l : index === count - 1 ? box.l + plotW : middle;
+            root.appendChild(
+              svgEl("text", { class: "axis-text axis-x", x, y: height - 6, "text-anchor": anchor }, [
+                txt(mdLabel(slots[index].date)),
+              ]),
+            );
+          }
+
+          host.appendChild(root);
+
+          const legend = el("div", { cls: "legend" }, [
+            legendItem("swatch--input", copy.kpiInput),
+            legendItem("swatch--output", copy.kpiOutput),
+            legendItem("swatch--cache", copy.kpiCacheRead),
+          ]);
+          host.appendChild(legend);
+
+          const dailyAvg = count > 0 ? total / count : 0;
+          host.appendChild(
+            el("p", {
+              cls: "sr-only",
+              attr: { id: "trend-summary" },
+              text: copy.trendSummary(
+                count,
+                fmtInt(total),
+                fmtDayFull(peak.date.getTime()),
+                fmtInt(peak.tokens),
+                fmtInt(dailyAvg),
+              ),
+            }),
+          );
+          host.appendChild(el("p", { cls: "panel-foot", text: copy.trendFoot }));
+
+          return host;
+        }
+
+        function legendItem(swatchClass, label) {
+          return el("span", { cls: "legend-item" }, [
+            el("span", { cls: `swatch ${swatchClass}` }),
+            el("span", { text: label }),
+          ]);
+        }
+
+        // ── heat map ─────────────────────────────────────────────────────────
+
+        function renderHeat() {
+          const copy = C();
+          const heat = state.view.heat;
+          let max = 0;
+          let total = 0;
+          let best = { day: 0, hour: 0, tokens: 0 };
+          for (let day = 0; day < 7; day += 1) {
+            for (let hour = 0; hour < 24; hour += 1) {
+              const value = heat[day][hour];
+              total += value;
+              if (value > max) max = value;
+              if (value > best.tokens) best = { day, hour, tokens: value };
+            }
+          }
+
+          const levelOf = (value) => {
+            if (value <= 0 || max <= 0) return 0;
+            const ratio = value / max;
+            if (ratio >= 0.75) return 5;
+            if (ratio >= 0.5) return 4;
+            if (ratio >= 0.28) return 3;
+            if (ratio >= 0.12) return 2;
+            return 1;
+          };
+
+          const axis = el("div", { cls: "heat-axis", attr: { "aria-hidden": "true" } }, [
+            el("span"),
+          ]);
+          for (let day = 0; day < 7; day += 1) {
+            axis.appendChild(el("span", { cls: "heat-day", text: copy.weekday[day] }));
+          }
+
+          const grid = el("div", { cls: "heat-grid" });
+          for (let hour = 0; hour < 24; hour += 3) {
+            grid.appendChild(el("span", { cls: "heat-h", text: String(hour) }));
+          }
+          for (let day = 0; day < 7; day += 1) {
+            for (let hour = 0; hour < 24; hour += 1) {
+              const value = heat[day][hour];
+              const cell = el("div", {
+                cls: "hc",
+                attr: { "data-level": String(levelOf(value)), "data-day": day, "data-hour": hour },
+              });
+              cell.addEventListener("pointermove", (event) => {
+                showTipFor(
+                  `h:${day}:${hour}`,
+                  () =>
+                    el("div", {}, [
+                      el("div", {
+                        cls: "tip-date",
+                        text: `${copy.weekday[day]} ${pad2(hour)}:00`,
+                      }),
+                      tipRow(copy.kpiTotal, fmtInt(value)),
+                    ]),
+                  event.clientX,
+                  event.clientY,
+                );
+              });
+              cell.addEventListener("pointerleave", hideTip);
+              grid.appendChild(cell);
+            }
+          }
+
+          const summary = copy.heatSummary(
+            copy.weekday[best.day],
+            pad2(best.hour),
+            fmtInt(best.tokens),
+            fmtInt(total),
+          );
+          grid.setAttribute("role", "img");
+          grid.setAttribute("aria-label", copy.heatAria(summary));
+
+          const scroll = el("div", { cls: "heat-scroll" }, [grid]);
+          const body = el("div", {}, [
+            el("div", { cls: "heat-body" }, [axis, scroll]),
+            el("p", { cls: "scroll-hint", hidden: true, text: copy.scrollHint }),
+            el(
+              "div",
+              { cls: "heat-legend", attr: { "aria-hidden": "true" } },
+              [
+                el("span", { text: copy.heatLess }),
+                ...[1, 2, 3, 4, 5].map((level) =>
+                  el("span", { cls: "swatch", attr: { "data-level": level }, style: { background: `var(--heat-${level})` } }),
+                ),
+                el("span", { text: copy.heatMore }),
+              ],
+            ),
+          ]);
+
+          return panel("heat", copy.secHeat, copy.heatMeta(`${copy.weekday[best.day]} ${pad2(best.hour)}:00`), body, {
+            extraClass: state.view.notes.length ? "" : "panel--fill",
+          });
+        }
+
+        // ── projects ─────────────────────────────────────────────────────────
+
+        function projectLabel(project) {
+          if (project.name) return project.name;
+          if (project.label) return project.label;
+          const entry = state.catalog.projects.find((item) => item.id === project.id);
+          if (entry && entry.name) return entry.name;
+          if (entry && entry.label) return entry.label;
+          if (entry && entry.fallback) return entry.fallback;
+          return C().projectFallback(project.id);
+        }
+
+        function shareCell(percent) {
+          const value = Math.max(0, Math.min(100, num(percent)));
+          return el("div", { cls: "share" }, [
+            el("span", { cls: "share-track" }, [
+              el("span", { cls: "share-fill", style: { width: `${value.toFixed(1)}%` } }),
+            ]),
+            el("span", { cls: "share-val", text: fmtPct(value) }),
+          ]);
+        }
+
+        function chevron() {
+          return svgEl("svg", { width: 10, height: 10, viewBox: "0 0 10 10", "aria-hidden": "true" }, [
+            svgEl("path", {
+              d: "M3 1.5 L6.5 5 L3 8.5",
+              fill: "none",
+              stroke: "currentColor",
+              "stroke-width": 1.4,
+              "stroke-linecap": "round",
+              "stroke-linejoin": "round",
+            }),
+          ]);
+        }
+
+        function renderProjectsTable() {
+          const copy = C();
+          const view = state.view;
+          const projects = view.projects;
+
+          const table = el("table", { cls: "tbl" });
+          const caption = el("caption", { cls: "sr-only", text: copy.captionProjects });
+          table.appendChild(caption);
+          table.appendChild(
+            el("thead", {}, [
+              el("tr", {}, [
+                el("th", { text: copy.thName, attr: { scope: "col" } }),
+                el("th", { cls: "num", text: copy.thTokens, attr: { scope: "col" } }),
+                el("th", { text: copy.thShare, attr: { scope: "col" } }),
+                el("th", { cls: "num", text: copy.thTurns, attr: { scope: "col" } }),
+                el("th", { cls: "num", text: copy.thSessions, attr: { scope: "col" } }),
+                el("th", { cls: "num", text: copy.thCacheRead, attr: { scope: "col" } }),
+                el("th", { cls: "num", text: copy.thLast, attr: { scope: "col" } }),
+              ]),
+            ]),
+          );
+
+          const tbody = el("tbody");
+          for (const project of projects) {
+            const name = projectLabel(project);
+            const open = state.expanded.has(project.id);
+            const rowId = `prj-${project.id}`;
+            const toggle = el(
+              "button",
+              {
+                cls: "spread",
+                attr: {
+                  type: "button",
+                  "aria-expanded": open ? "true" : "false",
+                  "aria-controls": open ? `pm-${project.id}` : null,
+                  "aria-label": open ? copy.collapse(name) : copy.expand(name),
+                  "data-fk": rowId,
+                },
+                on: {
+                  click: () => {
+                    if (state.expanded.has(project.id)) state.expanded.delete(project.id);
+                    else state.expanded.add(project.id);
+                    renderMain({ animate: false, focusKey: rowId });
+                  },
+                },
+              },
+              [chevron()],
+            );
+            const nameCell = el("div", { cls: "name-cell" }, [toggle, el("span", { cls: "prj-name", text: name, attr: { title: name } })]);
+
+            const row = el("tr", {}, [
+              el("th", { attr: { scope: "row" } }, [nameCell]),
+              el("td", { cls: "num", text: fmtCompact(project.tokens), attr: { title: fmtInt(project.tokens) } }),
+              el("td", {}, [shareCell(project.share)]),
+              el("td", { cls: "num", text: fmtInt(project.turns) }),
+              el("td", { cls: "num", text: fmtInt(project.sessions) }),
+              el("td", { cls: "num", text: fmtCompact(project.cacheRead), attr: { title: fmtInt(project.cacheRead) } }),
+              el("td", { cls: "num dim", text: fmtRelative(project.lastAt), attr: { title: fmtDate(project.lastAt) } }),
+            ]);
+            tbody.appendChild(row);
+
+            if (open) {
+              const details = el("div", { cls: "detail-list", attr: { id: `pm-${project.id}` } });
+              for (const model of project.models) {
+                const share = project.tokens > 0 ? (model.tokens / project.tokens) * 100 : 0;
+                details.appendChild(
+                  el("div", { cls: "detail-row" }, [
+                    el("span", { cls: "mono", text: model.modelId, attr: { title: model.modelId } }),
+                    shareCell(share),
+                    el("span", {
+                      cls: "num",
+                      text: `${fmtCompact(model.tokens)} · ${copy.detailTurns(fmtInt(model.turns))}`,
+                    }),
+                  ]),
+                );
+              }
+              if (!project.models.length) {
+                details.appendChild(el("p", { cls: "dim", text: "—" }));
+              }
+              tbody.appendChild(
+                el("tr", { cls: "detail" }, [
+                  el("td", { attr: { colspan: 7 } }, [
+                    el("p", { cls: "detail-title", text: copy.detailTitle }),
+                    details,
+                  ]),
+                ]),
+              );
+            }
+          }
+          table.appendChild(tbody);
+
+          const scroll = el("div", { cls: "table-scroll" }, [table]);
+          const body = el("div", {}, [scroll, el("p", { cls: "scroll-hint", hidden: true, text: copy.scrollHint })]);
+          return panel("projects", copy.secProjects, copy.projectsMeta(projects.length), body);
+        }
+
+        // ── models ───────────────────────────────────────────────────────────
+
+        function renderModelsTable() {
+          const copy = C();
+          const view = state.view;
+          const models = view.models;
+          const cost = view.cost;
+          const unpriced = new Set(cost ? cost.unpricedModels : []);
+          const amountByModel = new Map();
+          if (cost) for (const row of cost.byModel) amountByModel.set(row.modelId, row.amount);
+
+          const table = el("table", { cls: "tbl tbl--models" });
+          table.appendChild(el("caption", { cls: "sr-only", text: copy.captionModels }));
+
+          const headCells = [
+            el("th", { text: copy.thModel, attr: { scope: "col" } }),
+            el("th", { text: copy.thProvider, attr: { scope: "col" } }),
+            el("th", { cls: "num", text: copy.thTokens, attr: { scope: "col" } }),
+            el("th", { text: copy.thShare, attr: { scope: "col" } }),
+            el("th", { cls: "num", text: copy.thTurns, attr: { scope: "col" } }),
+            el("th", { cls: "num", text: copy.thAvg, attr: { scope: "col" } }),
+            el("th", { cls: "num", text: copy.thTps, attr: { scope: "col" } }),
+            el("th", { cls: "num", text: copy.thCacheRead, attr: { scope: "col" } }),
+          ];
+          if (cost) headCells.push(el("th", { cls: "num", text: copy.thAmount, attr: { scope: "col" } }));
+          table.appendChild(el("thead", {}, [el("tr", {}, headCells)]));
+
+          const tbody = el("tbody");
+          for (const model of models) {
+            const cells = [
+              el("td", {}, [
+                el("span", { cls: "mono", text: model.id, attr: { title: model.id } }),
+              ]),
+              el("td", { cls: "dim", text: model.providerId || "—" }),
+              el("td", { cls: "num", text: fmtCompact(model.tokens), attr: { title: fmtInt(model.tokens) } }),
+              el("td", {}, [shareCell(model.share)]),
+              el("td", { cls: "num", text: fmtInt(model.turns) }),
+              el("td", { cls: "num", text: fmtCompact(model.avgPerTurn), attr: { title: fmtInt(model.avgPerTurn) } }),
+              el("td", { cls: "num", text: fmtDec(model.tokensPerSecond, 1) }),
+              el("td", { cls: "num", text: fmtCompact(model.cacheRead), attr: { title: fmtInt(model.cacheRead) } }),
+            ];
+            if (cost) {
+              const amount = amountByModel.get(model.id);
+              if (amount !== undefined) {
+                cells.push(el("td", { cls: "num", text: fmtMoney(amount, cost.currency || view.settings.currency) }));
+              } else if (unpriced.has(model.id)) {
+                cells.push(
+                  el("td", { cls: "num" }, [
+                    el("span", {
+                      cls: "tag tag--warn",
+                      text: copy.unpriced,
+                      attr: { title: copy.unpricedTitle },
+                    }),
+                  ]),
+                );
+              } else {
+                cells.push(el("td", { cls: "num dim", text: "—" }));
+              }
+            }
+            tbody.appendChild(el("tr", {}, cells));
+          }
+          table.appendChild(tbody);
+
+          const scroll = el("div", { cls: "table-scroll" }, [table]);
+          const body = el("div", {}, [scroll, el("p", { cls: "scroll-hint", hidden: true, text: copy.scrollHint })]);
+          return panel("models", copy.secModels, copy.modelsMeta(models.length), body);
+        }
+
+        // ── sessions ─────────────────────────────────────────────────────────
+
+        function renderSessions() {
+          const copy = C();
+          const sessions = state.view.sessions;
+          if (!sessions.length) {
+            return panel("sessions", copy.secSessions, "", el("p", { cls: "state-body", text: copy.sessEmpty }));
+          }
+          const listNode = el("ol", { cls: "sessions" });
+          for (const session of sessions) {
+            const title = session.title || (session.sessionId ? session.sessionId.slice(0, 10) : "—");
+            const projectName =
+              session.projectName ||
+              (session.projectId === null
+                ? ""
+                : (state.catalog.projects.find((project) => project.id === session.projectId) || {}).name ||
+                  C().projectFallback(session.projectId));
+            const meta = el("div", { cls: "sess-meta" }, [
+              projectName ? el("span", { text: projectName }) : null,
+              projectName && session.modelId ? el("span", { text: "·", attr: { "aria-hidden": "true" } }) : null,
+              session.modelId ? el("span", { cls: "mono", text: session.modelId, attr: { title: session.modelId } }) : null,
+            ]);
+            listNode.appendChild(
+              el("li", { cls: "sess" }, [
+                el("div", { cls: "sess-top" }, [
+                  el("span", { cls: "sess-title", text: title, attr: { title } }),
+                  el("span", { cls: "sess-when", text: fmtRelative(session.lastAt) }),
+                ]),
+                meta,
+                el("div", { cls: "sess-nums" }, [
+                  el("span", {
+                    text: `${fmtCompact(session.tokens)} ${copy.unitTokens}`,
+                    attr: { title: fmtInt(session.tokens) },
+                  }),
+                  el("span", { text: copy.sessTurns(fmtInt(session.turns)) }),
+                ]),
+              ]),
+            );
+          }
+          return panel("sessions", copy.secSessions, copy.sessionsMeta(sessions.length), listNode);
+        }
+
+        // ── notes ────────────────────────────────────────────────────────────
+
+        function notesNode(notes) {
+          const listNode = el("ul", { cls: "notes" });
+          for (const note of notes) listNode.appendChild(el("li", { text: note }));
+          return listNode;
+        }
+
+        function renderNotes() {
+          const copy = C();
+          return panel("notes", copy.secNotes, "", notesNode(state.view.notes));
+        }
+
+        // ── states ───────────────────────────────────────────────────────────
+
+        function skeleton() {
+          const copy = C();
+          const wrap = el("div", { cls: "sk", attr: { "aria-hidden": "true" } }, [
+            el("div", { cls: "sk-panel" }, [
+              el("div", { cls: "sk-line" }),
+              el(
+                "div",
+                { cls: "sk-grid" },
+                Array.from({ length: 8 }, () => el("div", { cls: "sk-tile" })),
+              ),
+            ]),
+            el("div", { cls: "sk-panel" }, [el("div", { cls: "sk-line" }), el("div", { cls: "sk-block" })]),
+            el("div", { cls: "sk-panel" }, [el("div", { cls: "sk-line" }), el("div", { cls: "sk-block" })]),
+          ]);
+          const holder = el("div", {}, [
+            el("p", { cls: "sr-only", text: copy.loading }),
+            wrap,
+          ]);
+          return holder;
+        }
+
+        function stateMark(kind) {
+          const wrap = el("span", { cls: "state-mark", attr: { "aria-hidden": "true" } });
+          if (kind === "error") {
+            wrap.appendChild(
+              svgEl("svg", { width: 14, height: 14, viewBox: "0 0 14 14" }, [
+                svgEl("path", {
+                  d: "M7 2.4 12.3 11.6H1.7Z",
+                  fill: "none",
+                  stroke: "currentColor",
+                  "stroke-width": 1.2,
+                  "stroke-linejoin": "round",
+                }),
+                svgEl("path", {
+                  d: "M7 5.8v2.5",
+                  stroke: "currentColor",
+                  "stroke-width": 1.2,
+                  "stroke-linecap": "round",
+                }),
+                svgEl("circle", { cx: 7, cy: 10, r: 0.65, fill: "currentColor" }),
+              ]),
+            );
+          } else {
+            wrap.appendChild(
+              svgEl("svg", { width: 14, height: 14, viewBox: "0 0 14 14" }, [
+                svgEl("rect", {
+                  x: 1.6,
+                  y: 1.6,
+                  width: 10.8,
+                  height: 10.8,
+                  rx: 2.6,
+                  fill: "none",
+                  stroke: "currentColor",
+                  "stroke-width": 1.2,
+                  "stroke-dasharray": "2.6 2.2",
+                }),
+              ]),
+            );
+          }
+          return wrap;
+        }
+
+        function emptyState() {
+          const copy = C();
+          const actions = el("div", { cls: "state-actions" });
+          if (state.days !== 365) {
+            actions.appendChild(
+              el("button", {
+                cls: "btn",
+                attr: { type: "button" },
+                text: copy.emptyCta365,
+                on: { click: () => setDays(365) },
+              }),
+            );
+          }
+          if (state.projectId !== null || state.modelId !== null) {
+            actions.appendChild(
+              el("button", {
+                cls: "btn",
+                attr: { type: "button" },
+                text: copy.emptyCtaClear,
+                on: { click: clearFilters },
+              }),
+            );
+          }
+          const body = el("div", {}, [
+            el("div", { cls: "state" }, [
+              stateMark("empty"),
+              el("h2", { cls: "state-title", text: copy.emptyTitle, attr: { id: "h-empty" } }),
+              el("p", { cls: "state-body", text: copy.emptyBody }),
+              actions,
+              state.view.notes.length ? notesNode(state.view.notes) : null,
+            ]),
+          ]);
+          const section = el("section", {
+            cls: "panel panel--empty",
+            attr: { "aria-labelledby": "h-empty" },
+          }, [body]);
+          return section;
+        }
+
+        function errorState(message) {
+          const copy = C();
+          const body = el("div", { cls: "state" }, [
+            stateMark("error"),
+            el("h2", { cls: "state-title", text: copy.errorTitle, attr: { id: "h-error" } }),
+            el("p", { cls: "state-body", text: message || copy.unknownError }),
+            el("div", { cls: "state-actions" }, [
+              el("button", {
+                cls: "btn btn--solid",
+                attr: { type: "button" },
+                text: copy.retry,
+                on: { click: () => load({ force: true }) },
+              }),
+            ]),
+          ]);
+          return el("section", { cls: "panel panel--error", attr: { "aria-labelledby": "h-error" } }, [
+            body,
+          ]);
+        }
+
+        function banner(message) {
+          const copy = C();
+          return el("div", { cls: "banner", attr: { role: "group" } }, [
+            el("span", { cls: "banner-text", text: copy.bannerText(message) }),
+            el("button", {
+              cls: "btn",
+              attr: { type: "button" },
+              text: copy.retry,
+              on: { click: () => load({ force: true }) },
+            }),
+          ]);
+        }
+
+        // ── main render ──────────────────────────────────────────────────────
+
+        function renderMain(options) {
+          const opts = options || {};
+          const copy = C();
+          const focusKey = opts.focusKey || null;
+          const active = document.activeElement;
+          const keepKey =
+            focusKey || (active && active.getAttribute ? active.getAttribute("data-fk") : null);
+          const hadBarFocus = Boolean(active && active.classList && active.classList.contains("day-bar"));
+          const barIndex = state.barFocus;
+
+          hideTip();
+          clearNode(refs.main);
+          refs.main.classList.toggle("enter", opts.animate === true);
+
+          let index = 0;
+          const add = (node) => {
+            if (!node) return;
+            node.style.setProperty("--i", String(index));
+            index += 1;
+            refs.main.appendChild(node);
+          };
+
+          if (state.error && !state.view) {
+            add(errorState(state.error.message));
+            return;
+          }
+
+          if (!state.view) {
+            add(skeleton());
+            return;
+          }
+
+          if (state.error && state.view) add(banner(state.error.message));
+
+          if (state.view.totals.turns === 0) {
+            add(emptyState());
+          } else {
+            add(renderKpis());
+            add(
+              panel(
+                "trend",
+                copy.secTrend,
+                copy.trendMeta(
+                  state.axis.length,
+                  fmtCompact(
+                    state.axis.reduce(
+                      (best, slot) => Math.max(best, slot.input + slot.output + slot.cacheRead),
+                      0,
+                    ),
+                  ),
+                ),
+                renderTrend(),
+              ),
+            );
+            add(renderHeat());
+            if (state.view.notes.length) add(renderNotes());
+            if (state.view.projects.length) add(renderProjectsTable());
+            if (state.view.models.length) add(renderModelsTable());
+            add(renderSessions());
+          }
+
+          if (keepKey) {
+            const target = refs.main.querySelector(`[data-fk="${cssEscape(keepKey)}"]`);
+            if (target && typeof target.focus === "function") target.focus();
+          } else if (hadBarFocus && state.view.totals.turns > 0) {
+            const bars = refs.main.querySelectorAll(".day-bar");
+            if (bars.length) {
+              const index2 = Math.max(0, Math.min(bars.length - 1, barIndex));
+              const target = bars[index2];
+              if (target) {
+                for (const bar of bars) bar.setAttribute("tabindex", bar === target ? "0" : "-1");
+                target.focus();
+              }
+            }
+          }
+
+          syncScrollables();
+          fitTrend();
+        }
+
+        function fitTrend() {
+          const host = refs.main.querySelector(".panel--trend .trend-host");
+          if (!host) return;
+          const current = host.querySelector(".trend-svg");
+          if (!current) return;
+          const available = Math.round(host.clientWidth);
+          if (available < 240) return;
+          if (Math.abs(available - Number(current.getAttribute("width"))) < 2) return;
+          host.replaceWith(renderTrend(available));
+        }
+
+        function cssEscape(value) {
+          if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(String(value));
+          return String(value).replace(/["\\]/g, "\\$&");
+        }
+
+        function syncScrollables() {
+          const boxes = refs.main.querySelectorAll(".table-scroll, .heat-scroll");
+          for (const box of boxes) {
+            const overflowing = box.scrollWidth > box.clientWidth + 1;
+            if (overflowing) box.setAttribute("tabindex", "0");
+            else box.removeAttribute("tabindex");
+            const hint = box.parentElement
+              ? box.parentElement.querySelector(":scope > .scroll-hint")
+              : null;
+            if (hint) hint.hidden = !overflowing;
+            else if (box.classList.contains("heat-scroll")) {
+              const heatHint = refs.main.querySelector(".scroll-hint");
+              if (heatHint) heatHint.hidden = !overflowing;
+            }
+          }
+        }
+
+        // ── actions ──────────────────────────────────────────────────────────
+
+        function clearFilters() {
+          if (state.projectId === null && state.modelId === null) return;
+          state.projectId = null;
+          state.modelId = null;
+          renderFilters();
+          load({});
+        }
+
+        function setDays(days) {
+          const next = Math.max(1, Math.min(365, Math.round(Number(days) || 30)));
+          if (next === state.days) {
+            syncCheckedChip();
+            return;
+          }
+          state.days = next;
+          if (state.chipDays.indexOf(next) === -1) {
+            state.chipDays = CHIP_DAYS.concat([next]).sort((a, b) => a - b);
+          }
+          renderFilters();
+          load({});
+        }
+
+        function snapshotParams(force) {
+          const payload = { days: state.days };
+          if (state.projectId !== null) payload.projectId = state.projectId;
+          if (state.modelId !== null) payload.modelId = state.modelId;
+          if (force) payload.force = true;
+          return payload;
+        }
+
+        // ── bridge ───────────────────────────────────────────────────────────
+
+        function bridge() {
+          const candidate = window.pluginBridge;
+          return candidate && typeof candidate.invoke === "function" ? candidate : null;
+        }
+
+        async function call(channel, payload) {
+          const api = bridge();
+          if (!api) return { ok: false, code: "NO_BRIDGE", message: C().noBridge };
+          try {
+            const answer = await api.invoke(channel, payload);
+            return answer && typeof answer === "object" ? answer : { ok: false, code: "BAD_ANSWER" };
+          } catch (error) {
+            const message =
+              error && typeof error.message === "string" && error.message
+                ? error.message
+                : String(error);
+            return { ok: false, code: "BRIDGE_ERROR", message };
+          }
+        }
+
+        function setStatus(value) {
+          if (!refs.status || refs.status.textContent === value) return;
+          refs.status.textContent = value;
+        }
+
+        function updateButtons() {
+          refs.refresh.dataset.busy = state.inflight ? "true" : "false";
+          refs.refresh.setAttribute("aria-busy", state.inflight ? "true" : "false");
+          refs.refresh.setAttribute("aria-label", state.inflight ? C().refreshBusy : C().refresh);
+          refs.exportBtn.disabled = !state.view;
+          refs.exportBtn.setAttribute("title", state.view ? C().exportHint : C().exportEmpty);
+        }
+
+        async function load(options) {
+          const opts = options || {};
+          const force = opts.force === true;
+          // A background poll never stacks on top of a read in progress; any
+          // user action supersedes it so a hung host answer cannot lock the view.
+          if (state.inflight && !force && opts.silent === true) return;
+
+          const seq = state.seq + 1;
+          state.seq = seq;
+          state.inflight = true;
+          const hadData = Boolean(state.view);
+          if (hadData) {
+            refs.bar.dataset.refresh = "true";
+            refs.main.setAttribute("aria-busy", "true");
+          }
+          setStatus(C().statusRefreshing);
+          updateButtons();
+
+          const answer = await call("stats.snapshot", snapshotParams(force));
+          if (seq !== state.seq) return;
+
+          state.inflight = false;
+          refs.bar.dataset.refresh = "false";
+          refs.main.removeAttribute("aria-busy");
+
+          if (!answer || answer.ok !== true) {
+            const message =
+              (answer && typeof answer.message === "string" && answer.message) || C().unknownError;
+            state.error = { message, code: (answer && answer.code) || "ERROR" };
+            setStatus(C().statusFailed);
+            renderMain({ animate: false });
+            renderHeader();
+            updateButtons();
+            return;
+          }
+
+          state.error = null;
+          state.view = normalize(answer);
+          state.axis = buildDayAxis(state.view);
+          // The payload echoes the filters it applied. A reported filter wins;
+          // a null echo never clears a selection the user just made (an older
+          // host, or a stub, may not echo at all).
+          if (state.view.filters.projectId !== null) state.projectId = state.view.filters.projectId;
+          if (state.view.filters.modelId !== null) state.modelId = state.view.filters.modelId;
+          mergeCatalog(state.view);
+          renderHeader();
+          renderFilters();
+          renderMain({ animate: state.firstPaint });
+          state.firstPaint = false;
+          updateButtons();
+          setStatus(
+            state.view.totals.turns === 0
+              ? C().statusEmpty
+              : C().statusReady(fmtTime(state.view.generatedAt)),
+          );
+          scheduleNext();
+        }
+
+        // ── polling ──────────────────────────────────────────────────────────
+
+        function scheduleNext() {
+          if (state.timer) window.clearTimeout(state.timer);
+          state.timer = window.setTimeout(onTick, POLL_MS);
+        }
+
+        function onTick() {
+          state.timer = null;
+          if (document.visibilityState === "visible") load({ silent: true });
+          scheduleNext();
+        }
+
+        // ── CSV ──────────────────────────────────────────────────────────────
+
+        function csvCell(value) {
+          const raw = value === null || value === undefined ? "" : String(value);
+          if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+          return raw;
+        }
+
+        function csvTimestamp(ms) {
+          const n = numOrNull(ms);
+          if (n === null) return "";
+          return nfDate({ year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(
+            new Date(n),
+          );
+        }
+
+        function buildCsv() {
+          const copy = C();
+          const view = state.view;
+          const lines = [];
+          const push = (cells) => lines.push(cells.map(csvCell).join(","));
+          const days = view.window.days || state.days;
+          push([
+            `${copy.csvComment} BoneTokenStatistics · ${copy.subtitle(days, fmtDate(view.window.fromMs), fmtDate(view.window.toMs))}`,
+          ]);
+          push([`${copy.csvComment} ${copy.csvGenerated(csvTimestamp(view.generatedAt))}`]);
+          lines.push("");
+          push([`${copy.csvComment} ${copy.csvDaily}`]);
+          push(copy.csvDailyCols);
+          for (const day of view.days) {
+            push([
+              day.date,
+              Math.round(day.tokens),
+              Math.round(day.input),
+              Math.round(day.output),
+              Math.round(day.cacheRead),
+              Math.round(day.cacheWrite),
+              Math.round(day.reasoning),
+              Math.round(day.turns),
+            ]);
+          }
+          lines.push("");
+          push([`${copy.csvComment} ${copy.csvProjects}`]);
+          push(copy.csvProjectCols);
+          for (const project of view.projects) {
+            push([
+              project.id === null ? "" : project.id,
+              projectLabel(project),
+              Math.round(project.tokens),
+              fmtDec(project.share, 1),
+              Math.round(project.turns),
+              Math.round(project.sessions),
+              Math.round(project.cacheRead),
+              csvTimestamp(project.lastAt),
+            ]);
+          }
+          lines.push("");
+          push([`${copy.csvComment} ${copy.csvModels}`]);
+          const modelCols = copy.csvModelCols.slice();
+          if (view.cost) modelCols.push(`${copy.csvAmount} (${view.cost.currency || view.settings.currency || ""})`);
+          push(modelCols);
+          const amounts = new Map();
+          if (view.cost) for (const row of view.cost.byModel) amounts.set(row.modelId, row.amount);
+          for (const model of view.models) {
+            const cells = [
+              model.id,
+              model.providerId || "",
+              Math.round(model.tokens),
+              fmtDec(model.share, 1),
+              Math.round(model.turns),
+              Math.round(model.avgPerTurn),
+              fmtDec(model.tokensPerSecond, 2),
+              Math.round(model.cacheRead),
+            ];
+            if (view.cost) {
+              const amount = amounts.get(model.id);
+              cells.push(amount === undefined ? "" : amount);
+            }
+            push(cells);
+          }
+          return lines.join("\r\n");
+        }
+
+        function exportCsv() {
+          if (!state.view) return;
+          const copy = C();
+          const view = state.view;
+          const days = view.window.days || state.days;
+          const endKey = keyOf(
+            view.window.toMs !== null ? new Date(view.window.toMs) : new Date(),
+          );
+          let payload;
+          try {
+            payload = buildCsv();
+          } catch {
+            setStatus(copy.exportFailed);
+            return;
+          }
+          try {
+            const blob = new Blob([`\uFEFF${payload}`], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `bone-token-stats-${days}d-${endKey}.csv`;
+            anchor.rel = "noopener";
+            anchor.style.display = "none";
+            document.body.appendChild(anchor);
+            anchor.click();
+            window.setTimeout(() => {
+              anchor.remove();
+              URL.revokeObjectURL(url);
+            }, 2000);
+            setStatus(copy.exportDone);
+          } catch {
+            setStatus(copy.exportFailed);
+          }
+        }
+
+        // ── appearance ───────────────────────────────────────────────────────
+
+        const schemeQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+
+        function localeFor(tag) {
+          return /^zh/i.test(text(tag)) ? "zh-CN" : "en";
+        }
+
+        function applyAppearance(appearance) {
+          const base = appearance && typeof appearance.base === "string" ? appearance.base : "";
+          const resolved =
+            base === "light" || base === "dark"
+              ? base
+              : base === "system"
+                ? schemeQuery && schemeQuery.matches
+                  ? "light"
+                  : "dark"
+                : "dark";
+          if (resolved !== state.base) {
+            state.base = resolved;
+            document.documentElement.dataset.base = resolved;
+          }
+          const rawLocale = appearance && typeof appearance.locale === "string" ? appearance.locale : "";
+          const nextLocale = rawLocale ? localeFor(rawLocale) : state.locale;
+          if (nextLocale !== state.locale) {
+            state.locale = nextLocale;
+            buildFormatters();
+            applyCopy();
+            renderFilters();
+            renderHeader();
+            renderMain({ animate: false });
+            updateButtons();
+          }
+        }
+
+        // ── wiring ───────────────────────────────────────────────────────────
+
+        function bindEvents() {
+          refs.refresh.addEventListener("click", () => load({ force: true }));
+          refs.exportBtn.addEventListener("click", exportCsv);
+          refs.clear.addEventListener("click", clearFilters);
+
+          refs.project.addEventListener("change", () => {
+            const raw = refs.project.value;
+            state.projectId = raw === "" ? null : Number(raw);
+            renderFilters();
+            load({});
+          });
+          refs.model.addEventListener("change", () => {
+            const raw = refs.model.value;
+            state.modelId = raw === "" ? null : raw;
+            renderFilters();
+            load({});
+          });
+
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") load({});
+          });
+
+          window.addEventListener("pagehide", () => {
+            if (state.timer) window.clearTimeout(state.timer);
+            state.timer = null;
+          });
+
+          let resizeFrame = 0;
+          const onResize = () => {
+            if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
+            resizeFrame = window.requestAnimationFrame(() => {
+              resizeFrame = 0;
+              if (!state.view || state.view.totals.turns === 0) return;
+              fitTrend();
+              syncScrollables();
+            });
+          };
+          window.addEventListener("resize", onResize);
+          if (typeof ResizeObserver === "function") {
+            const observer = new ResizeObserver(onResize);
+            observer.observe(refs.main);
+          }
+
+          if (schemeQuery) {
+            const onScheme = () => {
+              if (!state.appearance || (state.appearance.base !== "light" && state.appearance.base !== "dark")) {
+                applyAppearance(state.appearance);
+              }
+            };
+            if (typeof schemeQuery.addEventListener === "function") schemeQuery.addEventListener("change", onScheme);
+          }
+        }
+
+        function withTimeout(promise, ms) {
+          return new Promise((resolve) => {
+            let settled = false;
+            const timer = window.setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              resolve(null);
+            }, ms);
+            promise.then(
+              (value) => {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timer);
+                resolve(value);
+              },
+              () => {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timer);
+                resolve(null);
+              },
+            );
+          });
+        }
+
+        function boot() {
+          state.locale = localeFor(navigator.language || "");
+          buildFormatters();
+          applyCopy();
+          renderFilters();
+          renderHeader();
+          renderMain({ animate: false });
+          updateButtons();
+          bindEvents();
+
+          const api = bridge();
+          if (api && typeof api.on === "function") {
+            try {
+              api.on("appearance:changed", (appearance) => {
+                state.appearance = appearance;
+                applyAppearance(appearance);
+              });
+            } catch {
+              /* older hosts may not expose events */
+            }
+          }
+
+          applyAppearance(null);
+          withTimeout(
+            call("app.getAppearance").then((appearance) => {
+              if (appearance && appearance.ok === false) return null;
+              state.appearance = appearance;
+              applyAppearance(appearance);
+              return appearance;
+            }),
+            PING_TIMEOUT_MS,
+          ).then(() => {
+            withTimeout(call("stats.ping"), PING_TIMEOUT_MS).then((ping) => {
+              if (ping && ping.ok === true) {
+                const defaultDays = Number(ping.defaultDays);
+                if (CHIP_DAYS.indexOf(defaultDays) !== -1 || (defaultDays >= 1 && defaultDays <= 365)) {
+                  if (!state.chipDays.includes(defaultDays)) {
+                    state.chipDays = CHIP_DAYS.concat([defaultDays]).sort((a, b) => a - b);
+                  }
+                  state.days = Math.max(1, Math.min(365, Math.round(defaultDays)));
+                  renderFilters();
+                }
+              }
+              load({});
+            });
+          });
+          scheduleNext();
+        }
+
+        boot();
+      })();
+    </script>
+  </body>
+</html>

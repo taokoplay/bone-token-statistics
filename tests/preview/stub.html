@@ -1,0 +1,181 @@
+    <script>
+      // Preview harness only (never shipped). Stands in for the host bridge and
+      // serves a deterministic synthetic snapshot so the view can be built and
+      // measured without PI-Desktop running.
+      (function () {
+        const DAY = 86_400_000;
+        const now = Date.UTC(2026, 9, 29, 12, 0, 0);
+        const MODELS = [
+          { id: "deepseek-v4-flash", providerId: "deepseek", weight: 0.44 },
+          { id: "claude-sonnet-4", providerId: "anthropic", weight: 0.3 },
+          { id: "gpt-5-codex", providerId: "openai-codex", weight: 0.19 },
+          { id: "mystery-model", providerId: "custom", weight: 0.07 },
+        ];
+        const PROJECTS = [
+          { id: 12, name: "Framecraft", weight: 0.46 },
+          { id: 7, name: "PI-Desktop", weight: 0.34 },
+          { id: 31, name: null, label: "项目 #31", weight: 0.2 },
+        ];
+        let seed = 7;
+        const rand = () => {
+          seed = (seed * 1103515245 + 12345) % 2147483648;
+          return seed / 2147483648;
+        };
+        const bucket = () => ({ tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, turns: 0 });
+
+        function build(days, { empty = false, truncated = false, cost = true } = {}) {
+          seed = 7; // same payload for every call, so external checks can compare
+          const dayRows = [];
+          const heat = Array.from({ length: 7 }, () => new Array(24).fill(0));
+          const totals = { ...bucket(), sessions: 0, projects: 0, models: 0, activeDays: 0, streak: 0, tokensWithCacheRead: 0, tokensPerSecond: 0, avgPerTurn: 0, cacheHitRate: 0, firstAt: null, lastAt: null };
+          const byProject = new Map();
+          const byModel = new Map();
+          const byProvider = new Map();
+          const sessions = [];
+
+          if (!empty) {
+            for (let d = days - 1; d >= 0; d -= 1) {
+              const date = new Date(now - d * DAY);
+              const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+              const day = { date, dateKey: key, ...bucket() };
+              const turnsToday = Math.round(6 + rand() * 26);
+              for (let t = 0; t < turnsToday; t += 1) {
+                const model = MODELS[Math.floor(rand() * MODELS.length) % MODELS.length];
+                const project = PROJECTS[Math.floor(rand() * PROJECTS.length) % PROJECTS.length];
+                const input = Math.round(400 + rand() * 9000);
+                const output = Math.round(80 + rand() * 2200);
+                const cacheRead = Math.round(rand() * 6000);
+                const cacheWrite = Math.round(rand() * 400);
+                const reasoning = Math.round(rand() * 300);
+                const tokens = input + output + cacheWrite + reasoning;
+                const hour = Math.floor(rand() * 24);
+                heat[(new Date(now - d * DAY).getUTCDay() + 6) % 7][hour] += tokens;
+
+                for (const b of [day, totals]) {
+                  b.input += input; b.output += output; b.cacheRead += cacheRead;
+                  b.cacheWrite += cacheWrite; b.reasoning += reasoning;
+                  b.tokens += tokens; b.turns += 1;
+                }
+                const pm = byProject.get(project.id) ?? { ...bucket(), sessions: new Set(), models: new Map() };
+                pm.input += input; pm.output += output; pm.cacheRead += cacheRead;
+                pm.cacheWrite += cacheWrite; pm.reasoning += reasoning; pm.tokens += tokens; pm.turns += 1;
+                pm.sessions.add(`${project.id}-${t % 3}`);
+                const pmodel = pm.models.get(model.id) ?? { modelId: model.id, tokens: 0, turns: 0 };
+                pmodel.tokens += tokens; pmodel.turns += 1; pm.models.set(model.id, pmodel);
+                byProject.set(project.id, pm);
+
+                const mm = byModel.get(model.id) ?? { ...bucket(), providerId: model.providerId };
+                mm.input += input; mm.output += output; mm.cacheRead += cacheRead;
+                mm.cacheWrite += cacheWrite; mm.reasoning += reasoning; mm.tokens += tokens; mm.turns += 1;
+                byModel.set(model.id, mm);
+
+                const pv = byProvider.get(model.providerId) ?? { id: model.providerId, tokens: 0, turns: 0 };
+                pv.tokens += tokens; pv.turns += 1; byProvider.set(model.providerId, pv);
+              }
+              dayRows.push({ date: day.dateKey, tokens: day.tokens, input: day.input, output: day.output, cacheRead: day.cacheRead, cacheWrite: day.cacheWrite, reasoning: day.reasoning, turns: day.turns });
+            }
+
+            for (let s = 0; s < 6; s += 1) {
+              const project = PROJECTS[s % PROJECTS.length];
+              const model = MODELS[s % MODELS.length];
+              sessions.push({
+                sessionId: `s-${s}`, title: `会话 ${s + 1}：${["排查 snapshot 回归", "重构卡片密度", "额度接口对接", "拆 transcript 渲染", "补 e2e 用例", "评审 PR"][s]}`,
+                projectId: project.id, projectName: project.name, modelId: model.id,
+                turns: 4 + Math.round(rand() * 18), tokens: Math.round(20000 + rand() * 380000),
+                lastAt: now - Math.round(rand() * 3 * DAY),
+              });
+            }
+            sessions.sort((a, b) => b.tokens - a.tokens);
+
+            totals.sessions = 9;
+            totals.projects = PROJECTS.length;
+            totals.models = MODELS.length;
+            totals.activeDays = days;
+            totals.streak = days;
+            totals.tokensWithCacheRead = totals.tokens + totals.cacheRead;
+            totals.avgPerTurn = Math.round((totals.tokens / totals.turns) * 10) / 10;
+            totals.tokensPerSecond = 168.4;
+            totals.cacheHitRate = Math.round((totals.cacheRead / (totals.input + totals.cacheRead)) * 1000) / 10;
+            totals.firstAt = now - (days - 1) * DAY;
+            totals.lastAt = now;
+          } else {
+            totals.avgPerTurn = 0;
+            totals.tokens = 0;
+          }
+
+          const modelsOut = [...byModel.entries()]
+            .map(([id, m]) => ({
+              id, providerId: m.providerId, tokens: m.tokens, input: m.input, output: m.output,
+              cacheRead: m.cacheRead, cacheWrite: m.cacheWrite, reasoning: m.reasoning, turns: m.turns,
+              share: totals.tokens ? Math.round((m.tokens / totals.tokens) * 1000) / 10 : 0,
+              avgPerTurn: m.turns ? Math.round((m.tokens / m.turns) * 10) / 10 : 0,
+              tokensPerSecond: Math.round(60 + rand() * 2200) / 10,
+            }))
+            .sort((a, b) => b.tokens - a.tokens);
+
+          const projectsOut = [...byProject.entries()]
+            .map(([id, p]) => ({
+              id, name: PROJECTS.find((x) => x.id === id)?.name ?? null,
+              label: PROJECTS.find((x) => x.id === id)?.label ?? null,
+              tokens: p.tokens, input: p.input, output: p.output, cacheRead: p.cacheRead,
+              cacheWrite: p.cacheWrite, reasoning: p.reasoning, turns: p.turns,
+              sessions: p.sessions.size, share: Math.round((p.tokens / totals.tokens) * 1000) / 10,
+              firstAt: now - 20 * DAY, lastAt: now,
+              models: [...p.models.values()].sort((a, b) => b.tokens - a.tokens),
+            }))
+            .sort((a, b) => b.tokens - a.tokens);
+
+          return {
+            ok: true,
+            generatedAt: new Date(now).toISOString(),
+            window: { days, fromMs: now - days * DAY, requestedFromMs: now - days * DAY, toMs: now },
+            truncated: { hits: truncated, limit: 20000, pages: Math.ceil(totals.turns / 500) },
+            filters: { projectId: null, modelId: null },
+            settings: { currency: "USD", defaultDays: 30, maxTurns: 20000, ratesConfigured: cost ? 1 : 0 },
+            totals,
+            days: dayRows,
+            heat,
+            projects: projectsOut,
+            models: modelsOut,
+            providers: [...byProvider.values()].map((p) => ({ ...p, share: totals.tokens ? Math.round((p.tokens / totals.tokens) * 1000) / 10 : 0 })).sort((a, b) => b.tokens - a.tokens),
+            sessions,
+            cost: cost && !empty
+              ? {
+                  currency: "USD",
+                  total: 12.4365,
+                  pricedTokens: modelsOut.find((m) => m.id === "claude-sonnet-4")?.tokens ?? 0,
+                  unpricedTokens: totals.tokens,
+                  byModel: modelsOut.filter((m) => m.id === "claude-sonnet-4").map((m) => ({ modelId: m.id, tokens: m.tokens, amount: 12.4365, share: 100 })),
+                  unpricedModels: modelsOut.filter((m) => m.id !== "claude-sonnet-4").map((m) => m.id),
+                }
+              : null,
+            notes: [
+              ...(truncated ? ["数据量超过上限：只统计了最近 20000 轮（窗口起点已前移到 2026/10/26 09:12）。可在插件设置里调大「最多读取的轮次数」。"] : []),
+              ...(cost ? ["成本只包含已配置单价的模型；未配置：deepseek-v4-flash、gpt-5-codex、mystery-model。"] : ["未配置单价，因此不显示金额。"]),
+              ...(empty ? ["这个时间范围内没有已完成的轮次。"] : []),
+              "1 个项目没能解析出目录名，已显示为「项目 #id」；可在设置里手工命名。",
+            ],
+          };
+        }
+
+        let mode = "rich";
+        window.__setStubMode = (next) => { mode = next; };
+        window.pluginBridge = {
+          on: () => {},
+          invoke: async (channel, payload) => {
+            if (channel === "app.getAppearance") return { base: "dark", locale: "zh-CN" };
+            if (channel === "stats.ping") return { ok: true, version: "0.1.0", defaultDays: 30, currency: "USD" };
+            if (channel === "stats.snapshot") {
+              const days = Number(payload?.days) || 30;
+              if (mode === "error") return { ok: false, code: "HOST_ERROR", message: "读取用量失败：宿主没有响应" };
+              if (mode === "empty") return build(days, { empty: true, cost: false });
+              if (mode === "truncated") return build(days, { truncated: true });
+              if (mode === "nocost") return build(days, { cost: false });
+              if (mode === "loading") return new Promise(() => {});
+              return build(days);
+            }
+            return { ok: true };
+          },
+        };
+      })();
+    </script>
