@@ -8,6 +8,10 @@
 - 面板通道：`stats.snapshot`（整份快照）、`stats.ping`（默认天数 / 币种）
 - 打开方式：命令「BoneTokenStatistics: 打开统计」（`bone.stats.open`）
 
+## 界面预览
+
+![Token 统计仪表盘：关键指标、每日趋势与周小时热力图](docs/images/token-statistics-dashboard.png)
+
 ## 它显示什么
 
 | 区块 | 内容 |
