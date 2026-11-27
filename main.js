@@ -3,28 +3,33 @@
 /**
  * BoneTokenStatistics — plugin process (`bone.token.statistics`).
  *
- * The host hands out one shape for this job: read-only, completed-turn token
- * counters (`pi.usage.listTurns`, permission `usage.read`). Everything the view
- * draws is computed here, in the plugin process, and shipped as one payload —
- * the renderer never pages, never aggregates and never talks to the host but
- * through `stats.*` channels.
+ * The host supplies completed-turn counters (`pi.usage.listTurns`). The
+ * plugin aggregates that history and queries balance endpoints with keys
+ * supplied by the user. The view reads both through `stats.*` channels.
  *
  * Nothing is invented: no rates means no cost, an unknown project id stays
  * `项目 #id`, and a capped read is reported as truncated instead of silently
  * pretending the numbers cover the whole window.
  */
 
-const path = require("node:path");
 const { summarize } = require("./lib/aggregate");
 const { estimateCost, normalizeRates } = require("./lib/cost");
+const { version } = require("./manifest.json");
+const { createBalances } = require("./lib/model-balances");
+
+const balances = createBalances({
+  getSettings: () => pi.plugin.getSettings(),
+  setSettings: (patch) => pi.plugin.setSettings(patch),
+  getDataPath: () => pi.plugin.getDataPath(),
+  getCapabilities: () => pi.net?.getCapabilities?.(),
+  fetch: (request) => pi.net.fetch(request),
+});
 
 const DAY_MS = 86_400_000;
 /** Host page size ceiling is 500. */
 const PAGE_LIMIT = 500;
 /** Hard stop so a broken cursor cannot spin forever. */
 const MAX_PAGES = 400;
-/** Project-name lookups are one `session.get` each; keep them bounded. */
-const MAX_PROJECT_LOOKUPS = 40;
 /** How many times the window start may move forward before giving up on a clean fit. */
 const MAX_NARROWING = 4;
 const SNAPSHOT_TTL_MS = 60_000;
@@ -38,8 +43,6 @@ const DEFAULTS = {
 };
 
 let snapshotCache = null;
-/** projectId → directory name, resolved once per process. */
-const projectNames = new Map();
 
 // ── 设置 ────────────────────────────────────────────────────────────────────
 
@@ -156,47 +159,36 @@ async function collectTurns({ fromMs, toMs, maxTurns }) {
 
 // ── 项目名 ──────────────────────────────────────────────────────────────────
 
-/**
- * A project is a numeric id in the usage rows. Its directory name lives on
- * `session.get(projectPath)`, so one session per project is resolved (and then
- * remembered). Settings `projectNames` wins over both, so a user can label a
- * project the plugin cannot name.
- */
-async function resolveProjectNames(projects, sessionByProject, settings) {
+/** Resolve current host project metadata without reading any session transcript. */
+async function resolveProjectNames(projects, settings) {
   const names = {};
-  let unresolved = 0;
-
-  for (const project of projects.slice(0, MAX_PROJECT_LOOKUPS)) {
-    const id = project.id;
-    const override = settings.projectNames?.[String(id)];
-    if (typeof override === "string" && override.trim()) {
-      names[id] = override.trim();
-      continue;
-    }
-    if (projectNames.has(id)) {
-      names[id] = projectNames.get(id);
-      continue;
-    }
-    const sessionId = sessionByProject.get(id);
-    if (!sessionId) {
-      unresolved += 1;
-      continue;
-    }
+  const catalog = new Map();
+  let issue = null;
+  if (projects.some(project => !(typeof settings.projectNames?.[String(project.id)] === "string" && settings.projectNames[String(project.id)].trim()))) {
     try {
-      const info = await pi.session.get({ sessionId });
-      const dir = typeof info?.projectPath === "string" ? path.basename(info.projectPath) : "";
-      if (dir) {
-        projectNames.set(id, dir);
-        names[id] = dir;
-      } else {
-        unresolved += 1;
+      const result = await pi.desktop.invoke({ operation: "project/list", args: [] });
+      if (!Array.isArray(result?.projects)) throw Object.assign(new Error("Invalid project catalog"), { code: "INVALID_RESPONSE" });
+      for (const project of result.projects) {
+        if (!project || project.id === null || project.id === undefined || !Number.isSafeInteger(Number(project.id))) continue;
+        const name = typeof project.name === "string" ? project.name.trim() : "";
+        const directory = typeof project.path === "string" ? project.path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() : "";
+        if (name || directory) catalog.set(Number(project.id), name || directory);
       }
-    } catch {
-      unresolved += 1;
+    } catch (error) {
+      const denied = /PERMISSION|permission|权限/.test(String(error?.code || error?.errorCode || "") + String(error?.message || ""));
+      issue = denied
+        ? "无法读取项目名称：请在插件页面重新加载或升级插件，并授权 desktop.control 权限。统计数据不受影响。"
+        : "宿主项目列表暂不可用，请刷新重试，并确认当前宿主支持 project/list 与 desktop.control。统计数据不受影响。";
     }
   }
-
-  return { names, unresolved };
+  let unresolved = 0;
+  for (const project of projects) {
+    const override = settings.projectNames?.[String(project.id)];
+    const name = typeof override === "string" && override.trim() ? override.trim() : catalog.get(project.id);
+    if (name) names[project.id] = name;
+    else unresolved += 1;
+  }
+  return { names, unresolved, issue };
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────
@@ -205,19 +197,41 @@ function cacheKey(params) {
   return JSON.stringify(params);
 }
 
+function resolveWindow(input, defaultDays, now) {
+  const range = input.range;
+  if (range === "today" || range === "yesterday") {
+    const date = new Date(now);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const day = date.getDate();
+    const todayStart = new Date(year, month, day).getTime();
+    const yesterday = range === "yesterday";
+    return {
+      range,
+      days: 1,
+      requestedFromMs: yesterday ? new Date(year, month, day - 1).getTime() : todayStart,
+      // The host includes both bounds. Reserve midnight for today.
+      toMs: yesterday ? todayStart - 1 : now,
+    };
+  }
+
+  const toMs = Number.isFinite(Number(input.toMs)) ? Number(input.toMs) : now;
+  const days = clampDays(input.days ?? defaultDays);
+  const requestedFromMs = Number.isFinite(Number(input.fromMs))
+    ? Number(input.fromMs)
+    : toMs - days * DAY_MS;
+  return { range: null, days, requestedFromMs, toMs };
+}
+
 /**
- * @param {{ days?: number, fromMs?: number, toMs?: number,
+ * @param {{ range?: "today"|"yesterday", days?: number, fromMs?: number, toMs?: number,
  *           projectId?: number|null, modelId?: string|null,
  *           force?: boolean }} input
  */
 async function buildSnapshot(input = {}) {
   const settings = await readSettings();
   const now = Date.now();
-  const toMs = Number.isFinite(Number(input.toMs)) ? Number(input.toMs) : now;
-  const days = clampDays(input.days ?? settings.defaultDays);
-  const requestedFromMs = Number.isFinite(Number(input.fromMs))
-    ? Number(input.fromMs)
-    : toMs - days * DAY_MS;
+  const { range, days, requestedFromMs, toMs } = resolveWindow(input, settings.defaultDays, now);
   // `Number(null)` is 0: a missing filter must not become "project 0".
   const requestedProjectId = input.projectId;
   const projectId =
@@ -231,6 +245,8 @@ async function buildSnapshot(input = {}) {
   // The key carries the settings the payload depends on: changing a rate or a
   // project label must not be answered from a snapshot computed without it.
   const key = cacheKey({
+    range,
+    days,
     toMs,
     requestedFromMs,
     projectId,
@@ -255,15 +271,15 @@ async function buildSnapshot(input = {}) {
     return true;
   });
 
-  const summary = summarize(rows, { now, fromMs: read.fromMs, toMs });
+  const summary = summarize(rows, {
+    // Anchor a single-day streak to the selected date's local midnight.
+    now: range ? requestedFromMs : now,
+    fromMs: read.fromMs,
+    toMs,
+    bucketBy: range ? "endedAt" : "startedAt",
+  });
 
-  const sessionByProject = new Map();
-  for (const row of rows) {
-    const id = Number(row?.projectId);
-    if (!Number.isFinite(id) || sessionByProject.has(id)) continue;
-    if (row?.sessionId) sessionByProject.set(id, String(row.sessionId));
-  }
-  const { names, unresolved } = await resolveProjectNames(summary.projects, sessionByProject, settings);
+  const { names, unresolved, issue } = await resolveProjectNames(summary.projects, settings);
   for (const project of summary.projects) {
     if (names[project.id]) project.name = names[project.id];
     else project.label = `项目 #${project.id}`;
@@ -276,13 +292,14 @@ async function buildSnapshot(input = {}) {
   const rates = normalizeRates(settings.rates);
 
   const notes = [];
+  if (issue) notes.push(issue);
   if (read.truncated) {
     notes.push(
       `数据量超过上限：只统计了最近 ${settings.maxTurns} 轮（窗口起点已前移到 ${new Date(read.fromMs).toLocaleString()}）。可在插件设置里调大「最多读取的轮次数」。`,
     );
   }
   if (unresolved > 0) {
-    notes.push(`${unresolved} 个项目没能解析出目录名，已显示为「项目 #id」；可在设置里手工命名。`);
+    notes.push(`${unresolved} 个项目未找到可用名称，已显示为「项目 #id」；可在设置里手工命名。`);
   }
   if (Object.keys(rates).length === 0) {
     notes.push("未配置单价，因此不显示金额。");
@@ -298,6 +315,7 @@ async function buildSnapshot(input = {}) {
     generatedAt: new Date(now).toISOString(),
     window: {
       ...summary.window,
+      ...(range ? { range } : {}),
       requestedFromMs,
       fromMs: read.fromMs,
       toMs,
@@ -333,12 +351,15 @@ async function buildSnapshot(input = {}) {
 // ── 通道 ────────────────────────────────────────────────────────────────────
 
 const CHANNELS = {
-  /** The whole dashboard in one answer. */
+  "stats.balances": (payload) => balances.list(payload),
+  "stats.balances.save": (payload) => balances.save(payload),
+  "stats.balances.remove": (payload) => balances.remove(payload),
+  /** The historical usage dashboard in one answer. */
   "stats.snapshot": (payload) => buildSnapshot(payload ?? {}),
   /** Cheap identity check for the view header. */
   "stats.ping": async () => {
     const settings = await readSettings();
-    return { ok: true, version: "0.1.0", defaultDays: settings.defaultDays, currency: settings.currency };
+    return { ok: true, version, defaultDays: settings.defaultDays, currency: settings.currency };
   },
 };
 
@@ -371,7 +392,7 @@ async function onLoad() {
 
 async function onUnload() {
   snapshotCache = null;
-  projectNames.clear();
+  balances.clear();
   try {
     await pi.commands.unregister("bone.stats.open");
   } catch {

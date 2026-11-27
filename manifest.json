@@ -2,8 +2,20 @@
   "schemaVersion": 1,
   "id": "bone.token.statistics",
   "name": "BoneTokenStatistics",
-  "version": "0.1.0",
-  "description": "跨所有项目的 token 用量统计：按时间、项目、模型、会话聚合轮次与输入/输出/缓存/推理 tokens，附日趋势、周×小时热力图与可选的成本估算。只读 pi.usage.listTurns，不读取消息正文。",
+  "version": "0.2.7",
+  "description": "跨项目 Token 用量统计与成本估算，支持自选 AI 渠道查询账户余额和套餐额度。",
+  "i18n": {
+    "en": {
+      "name": "Token Statistics",
+      "description": "Track token usage and estimated costs across projects, and check balances and plan quotas for supported AI providers.",
+      "safetyNotes": "The plugin reads completed-turn counts and queries official provider balance endpoints. Balance configurations are encrypted locally using system credential protection."
+    },
+    "zh-CN": {
+      "name": "Token 统计",
+      "description": "跨项目 Token 用量统计与成本估算，支持自选 AI 渠道查询账户余额和套餐额度。",
+      "safetyNotes": "插件读取已完成轮次的用量，并查询服务商官方余额接口。余额配置使用系统凭据保护加密保存在本机。"
+    }
+  },
   "author": "xutaoyu",
   "license": "MIT",
   "main": "main.js",
@@ -96,7 +108,7 @@
       {
         "key": "projectNames",
         "title": "项目显示名（可选）",
-        "description": "JSON：项目 id → 显示名，例如 {\"12\":\"Framecraft\"}。留空时插件会尝试从该项目的会话里读出目录名；都取不到就显示“项目 #id”。",
+        "description": "JSON：项目 id → 显示名，例如 {\"12\":\"Framecraft\"}。默认读取宿主项目列表中的当前名称，无名称时使用目录名；手动配置优先。",
         "type": "json",
         "default": {}
       }
@@ -105,8 +117,28 @@
   "permissions": [
     "ui.view",
     "usage.read",
-    "session.read"
+    "desktop.control",
+    "net.fetch"
   ],
+  "net": {
+    "domains": [
+      "api.deepseek.com",
+      "api.minimax.cn",
+      "api.minimax.io",
+      "open.bigmodel.cn",
+      "api.z.ai",
+      "api.moonshot.cn",
+      "api.moonshot.ai",
+      "api.kimi.com",
+      "openrouter.ai",
+      "api.xiaomimimo.com",
+      "token-plan-cn.xiaomimimo.com",
+      "token-plan-sgp.xiaomimimo.com",
+      "token-plan-ams.xiaomimimo.com",
+      "api.siliconflow.com",
+      "ai-gateway.vercel.sh"
+    ]
+  },
   "engines": {
     "piDesktop": ">=0.21.0"
   },
