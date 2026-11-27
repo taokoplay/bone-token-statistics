@@ -28,4 +28,17 @@ python3 view.check.py
 响应式热力图：`python3 tests/preview/heatmap.check.py`。验证 390、720、905、1280、1600px 窗口下铺满卡片宽度，保留 168 格和星期行对齐。
 
 余额回归：`node --test tests/model-balances.test.cjs` 和 `python3 tests/preview/balances.check.py`。
-覆盖添加与验证渠道、鉴权错误、重启后补填 Key、移除、刷新、历史筛选、额度格式与窄窗口布局。
+覆盖添加与验证渠道、鉴权错误、系统凭据存储不可用的界面提示、补填旧配置、移除、刷新和窄窗口布局。
+
+加密存储回归：`node --test tests/balance-vault.test.cjs`。覆盖密文落盘、重启恢复、旧配置迁移、更换 Key、移除和文件篡改。
+
+Run `python3 tests/preview/token-units.check.py` to verify K, M, and B in both
+languages, chart scales, full-value tooltips, and exact CSV counts.
+
+Calendar filters use `node --test tests/calendar-days.test.cjs` and
+`python3 tests/preview/calendar-days.check.py`. The tests cover inclusive
+completion-time boundaries, midnight rollover within the cache lifetime,
+23- and 25-hour days, and the panel's narrow layout, language, project and model
+selections, single-day chart, and exact CSV counts.
+
+The balance tests also verify that separate names identify accounts on the same provider, editing a name retains the stored API key, and both names persist after reload.

@@ -2,18 +2,18 @@
   "schemaVersion": 1,
   "id": "bone.token.statistics",
   "name": "BoneTokenStatistics",
-  "version": "0.2.0",
+  "version": "0.2.7",
   "description": "跨项目 Token 用量统计与成本估算，支持自选 AI 渠道查询账户余额和套餐额度。",
   "i18n": {
     "en": {
       "name": "Token Statistics",
       "description": "Track token usage and estimated costs across projects, and check balances and plan quotas for supported AI providers.",
-      "safetyNotes": "The plugin reads completed-turn counts and queries official provider balance endpoints. API keys are held in memory for the current plugin run."
+      "safetyNotes": "The plugin reads completed-turn counts and queries official provider balance endpoints. Balance configurations are encrypted locally using system credential protection."
     },
     "zh-CN": {
       "name": "Token 统计",
       "description": "跨项目 Token 用量统计与成本估算，支持自选 AI 渠道查询账户余额和套餐额度。",
-      "safetyNotes": "插件读取已完成轮次的用量，并查询服务商官方余额接口。API Key 仅保留在当次插件运行的内存中。"
+      "safetyNotes": "插件读取已完成轮次的用量，并查询服务商官方余额接口。余额配置使用系统凭据保护加密保存在本机。"
     }
   },
   "author": "xutaoyu",

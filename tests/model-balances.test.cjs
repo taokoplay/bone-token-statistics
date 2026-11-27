@@ -1,9 +1,17 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { afterEach, test } = require("node:test");
+const { afterEach, beforeEach, test } = require("node:test");
+const { mkdtemp, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
 const { onPanelInvoke, onUnload } = require("../main.js");
 const manifest = require("../manifest.json");
+
+let directory;
+beforeEach(async () => {
+  directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR || tmpdir(), "stats-host-fixture-"));
+});
 
 const fixtureKey = "sk-test-query-key-never-stored";
 const success = { status: 200, bodyText: JSON.stringify({
@@ -17,6 +25,7 @@ function mockHost({ fetch = async () => success, redirects = ["error"] } = {}) {
   global.pi = {
     plugin: {
       getSettings: async () => structuredClone(settings),
+      getDataPath: async () => directory,
       setSettings: async (patch) => { settings = { ...settings, ...structuredClone(patch) }; },
     },
     net: {
@@ -35,43 +44,18 @@ function mockHost({ fetch = async () => success, redirects = ["error"] } = {}) {
 afterEach(async () => {
   await onUnload();
   delete global.pi;
+  await rm(directory, { recursive: true, force: true });
 });
 
-test("adding a channel queries its official endpoint and persists only the non-secret configuration", async () => {
+test("empty balance state and historical statistics work together without sending a request", async () => {
   const host = mockHost();
   const initial = await onPanelInvoke("stats.balances");
   assert.equal(initial.ok, true);
   assert.deepEqual(initial.configs, []);
   assert.ok(initial.channels.some(channel => channel.id === "deepseek"));
+  const stats = await onPanelInvoke("stats.snapshot", { days: 7 });
+  assert.equal(stats.ok, true);
   assert.deepEqual(host.requests, []);
-
-  const saved = await onPanelInvoke("stats.balances.save", { channel: "deepseek", apiKey: fixtureKey });
-  assert.equal(saved.ok, true);
-  const [row] = saved.snapshot.configs;
-  assert.equal(row.status, "available");
-  assert.deepEqual(row.balance, { scope: "account", amounts: [{ currency: "CNY", amount: 0 }] });
-  assert.deepEqual(host.settings().balanceConfigs, [{ id: row.id, channel: "deepseek" }]);
-  assert.doesNotMatch(JSON.stringify([saved, host.settings()]), /sk-test-query-key/);
-  assert.deepEqual(host.requests.map(request => [request.method, request.url, request.redirect, request.headers.Authorization]), [
-    ["GET", "https://api.deepseek.com/user/balance", "error", `Bearer ${fixtureKey}`],
-  ]);
-
-  await onPanelInvoke("stats.snapshot", { days: 7 });
-  await onPanelInvoke("stats.balances");
-  assert.equal(host.requests.length, 1);
-  assert.equal((await onPanelInvoke("stats.balances", { refresh: true })).configs[0].status, "available");
-  assert.equal(host.requests.length, 2);
-
-  await onUnload();
-  const restored = await onPanelInvoke("stats.balances", { refresh: true });
-  assert.equal(restored.configs[0].id, row.id);
-  assert.equal(restored.configs[0].status, "missing-credential");
-  assert.equal(host.requests.length, 2);
-  const unlocked = await onPanelInvoke("stats.balances.save", { id: row.id, channel: "deepseek", apiKey: fixtureKey });
-  assert.equal(unlocked.snapshot.configs[0].status, "available");
-  const removed = await onPanelInvoke("stats.balances.remove", { id: row.id });
-  assert.deepEqual(removed.snapshot.configs, []);
-  assert.deepEqual(host.settings().balanceConfigs, []);
 });
 
 test("invalid channels and hosts without redirect protection never receive a Key", async () => {
@@ -105,38 +89,6 @@ test("the plugin network manifest matches its fixed channel destinations", () =>
   assert.equal(manifest.engines.piDesktop, ">=0.21.0");
 });
 
-test("a key stays bound to its original channel and an older refresh cannot overwrite a new key", async () => {
-  let releaseRefresh;
-  let refreshStarted;
-  const waitRefresh = new Promise(resolve => { releaseRefresh = resolve; });
-  const started = new Promise(resolve => { refreshStarted = resolve; });
-  let shouldWait = false;
-  const host = mockHost({ fetch: async request => {
-    if (request.headers.Authorization.endsWith("-replacement")) {
-      return { ...success, bodyText: JSON.stringify({ balance_infos: [{ currency: "CNY", total_balance: "14.30" }] }) };
-    }
-    if (shouldWait) {
-      refreshStarted();
-      await waitRefresh;
-    }
-    return success;
-  } });
-  const saved = await onPanelInvoke("stats.balances.save", { channel: "deepseek", apiKey: fixtureKey });
-  const [{ id }] = saved.snapshot.configs;
-  shouldWait = true;
-  const inFlight = onPanelInvoke("stats.balances", { refresh: true });
-  await started;
-  const updated = await onPanelInvoke("stats.balances.save", { id, channel: "deepseek", apiKey: `${fixtureKey}-replacement` });
-  releaseRefresh();
-  assert.equal(updated.snapshot.configs[0].balance.amounts[0].amount, 14.3);
-  assert.equal((await inFlight).configs[0].balance.amounts[0].amount, 14.3);
-
-  await global.pi.plugin.setSettings({ balanceConfigs: [{ id, channel: "bigmodel" }] });
-  const list = await onPanelInvoke("stats.balances", { refresh: true });
-  assert.deepEqual(list.configs, [{ id, channel: "bigmodel", status: "missing-credential" }]);
-  assert.equal(host.requests.length, 3);
-});
-
 test("the adapters keep the upstream amounts, denominations, and reset periods", () => {
   const { makeRequest } = require("../lib/balance-providers.js");
   const reset = 1893456000000;
@@ -148,7 +100,7 @@ test("the adapters keep the upstream amounts, denominations, and reset periods",
       scope: "plan", windows: [{ period: "5h", remainingPercent: 25, resetsAt: reset }],
     });
   }
-  assert.deepEqual(parse("minimax-cn", { base_resp: { status_code: 0 }, available_amount: "20.00" }, "sk-api-sample"), {
+  assert.deepEqual(parse("minimax-api-cn", { base_resp: { status_code: 0 }, available_amount: "20.00" }, "sk-api-sample"), {
     scope: "account", amounts: [{ amount: 20, currency: "CNY" }],
   });
   assert.deepEqual(parse("minimax", { base_resp: { status_code: 0 }, model_remains: [
@@ -167,4 +119,35 @@ test("the adapters keep the upstream amounts, denominations, and reset periods",
   assert.deepEqual(parse("siliconflow", { code: 20000, status: true, data: { totalBalance: "30.001" } }),
     { scope: "account", amounts: [{ amount: 30.001 }] });
   assert.deepEqual(parse("vercel", { balance: "12.50" }), { scope: "credits", account: true, remaining: 12.5 });
+});
+
+test("MiniMax M Plan accepts the quota shapes used by the official SDK and CLI", () => {
+  const { makeRequest } = require("../lib/balance-providers.js");
+  const request = makeRequest("minimax-cn", "sk-cp-test-plan");
+  const resetsAt = 1893456000000;
+  const quota = { model_remains: [
+    { model_name: "general", current_interval_remaining_percent: 64, current_weekly_remaining_percent: 82, weekly_end_time: resetsAt },
+    { model_name: "video", current_interval_status: 3, current_weekly_status: 3,
+      current_interval_total_count: 0, current_weekly_total_count: 0 },
+  ] };
+  assert.equal(request.url, "https://api.minimax.cn/v1/token_plan/remains");
+  assert.deepEqual(request.parse(quota), { scope: "plan", windows: [
+    { period: "5h", remainingPercent: 64 },
+    { period: "week", remainingPercent: 82, resetsAt },
+  ] });
+  assert.equal(request.parse({ ...quota, base_resp: { status_code: 1004 } }), undefined);
+  assert.equal(request.parse({ model_remains: quota.model_remains.slice(1) }), undefined);
+  const validVideo = { model_name: "video", start_time: 1893369600000, end_time: resetsAt,
+    current_interval_remaining_percent: 10 };
+  const windows = request.parse({ model_remains: [quota.model_remains[0], validVideo] }).windows;
+  assert.deepEqual(windows[2], { model: "video", period: "other", remainingPercent: 10, resetsAt });
+});
+
+test("MiniMax rejects a key from the other billing mode before starting an upstream request", async () => {
+  const host = mockHost();
+  assert.deepEqual(await onPanelInvoke("stats.balances.save", { channel: "minimax-cn", apiKey: "sk-api-fixture" }),
+    { ok: false, code: "MINIMAX_PLAN_KEY_REQUIRED" });
+  assert.deepEqual(await onPanelInvoke("stats.balances.save", { channel: "minimax-api-cn", apiKey: "sk-cp-fixture" }),
+    { ok: false, code: "MINIMAX_PAYGO_KEY_REQUIRED" });
+  assert.deepEqual(host.requests, []);
 });

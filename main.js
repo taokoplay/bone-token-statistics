@@ -14,11 +14,13 @@
 
 const { summarize } = require("./lib/aggregate");
 const { estimateCost, normalizeRates } = require("./lib/cost");
+const { version } = require("./manifest.json");
 const { createBalances } = require("./lib/model-balances");
 
 const balances = createBalances({
   getSettings: () => pi.plugin.getSettings(),
   setSettings: (patch) => pi.plugin.setSettings(patch),
+  getDataPath: () => pi.plugin.getDataPath(),
   getCapabilities: () => pi.net?.getCapabilities?.(),
   fetch: (request) => pi.net.fetch(request),
 });
@@ -195,19 +197,41 @@ function cacheKey(params) {
   return JSON.stringify(params);
 }
 
+function resolveWindow(input, defaultDays, now) {
+  const range = input.range;
+  if (range === "today" || range === "yesterday") {
+    const date = new Date(now);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const day = date.getDate();
+    const todayStart = new Date(year, month, day).getTime();
+    const yesterday = range === "yesterday";
+    return {
+      range,
+      days: 1,
+      requestedFromMs: yesterday ? new Date(year, month, day - 1).getTime() : todayStart,
+      // The host includes both bounds. Reserve midnight for today.
+      toMs: yesterday ? todayStart - 1 : now,
+    };
+  }
+
+  const toMs = Number.isFinite(Number(input.toMs)) ? Number(input.toMs) : now;
+  const days = clampDays(input.days ?? defaultDays);
+  const requestedFromMs = Number.isFinite(Number(input.fromMs))
+    ? Number(input.fromMs)
+    : toMs - days * DAY_MS;
+  return { range: null, days, requestedFromMs, toMs };
+}
+
 /**
- * @param {{ days?: number, fromMs?: number, toMs?: number,
+ * @param {{ range?: "today"|"yesterday", days?: number, fromMs?: number, toMs?: number,
  *           projectId?: number|null, modelId?: string|null,
  *           force?: boolean }} input
  */
 async function buildSnapshot(input = {}) {
   const settings = await readSettings();
   const now = Date.now();
-  const toMs = Number.isFinite(Number(input.toMs)) ? Number(input.toMs) : now;
-  const days = clampDays(input.days ?? settings.defaultDays);
-  const requestedFromMs = Number.isFinite(Number(input.fromMs))
-    ? Number(input.fromMs)
-    : toMs - days * DAY_MS;
+  const { range, days, requestedFromMs, toMs } = resolveWindow(input, settings.defaultDays, now);
   // `Number(null)` is 0: a missing filter must not become "project 0".
   const requestedProjectId = input.projectId;
   const projectId =
@@ -221,6 +245,8 @@ async function buildSnapshot(input = {}) {
   // The key carries the settings the payload depends on: changing a rate or a
   // project label must not be answered from a snapshot computed without it.
   const key = cacheKey({
+    range,
+    days,
     toMs,
     requestedFromMs,
     projectId,
@@ -245,7 +271,13 @@ async function buildSnapshot(input = {}) {
     return true;
   });
 
-  const summary = summarize(rows, { now, fromMs: read.fromMs, toMs });
+  const summary = summarize(rows, {
+    // Anchor a single-day streak to the selected date's local midnight.
+    now: range ? requestedFromMs : now,
+    fromMs: read.fromMs,
+    toMs,
+    bucketBy: range ? "endedAt" : "startedAt",
+  });
 
   const { names, unresolved, issue } = await resolveProjectNames(summary.projects, settings);
   for (const project of summary.projects) {
@@ -283,6 +315,7 @@ async function buildSnapshot(input = {}) {
     generatedAt: new Date(now).toISOString(),
     window: {
       ...summary.window,
+      ...(range ? { range } : {}),
       requestedFromMs,
       fromMs: read.fromMs,
       toMs,
@@ -326,7 +359,7 @@ const CHANNELS = {
   /** Cheap identity check for the view header. */
   "stats.ping": async () => {
     const settings = await readSettings();
-    return { ok: true, version: "0.2.0", defaultDays: settings.defaultDays, currency: settings.currency };
+    return { ok: true, version, defaultDays: settings.defaultDays, currency: settings.currency };
   },
 };
 

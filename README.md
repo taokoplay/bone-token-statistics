@@ -16,8 +16,8 @@
 
 | 区块 | 内容 |
 | --- | --- |
-| 页头 | 标题、时间窗（`最近 N 天 · 起 → 止`）、更新时间、`已截断` 徽标、刷新、导出 CSV |
-| 筛选栏 | 7 / 30 / 90 / 365 天（默认取 `defaultDays`）、项目下拉、模型下拉、清除筛选 |
+| 页头 | 标题、时间窗（`今日 · 日期`、`昨日 · 日期` 或 `最近 N 天 · 起 → 止`）、更新时间、`已截断` 徽标、刷新、导出 CSV |
+| 筛选栏 | 今日 / 昨日 / 7 / 30 / 90 / 365 天（默认取 `defaultDays`）、项目下拉、模型下拉、清除筛选 |
 | 关键指标 | 总 tokens、输入、输出、缓存读、缓存写、推理、轮次、会话数、活跃天数、连续天数、平均每轮、吞吐（tokens/s）、缓存命中率、覆盖项目数；有成本时增加「估算成本」 |
 | 每日趋势 | 输入 / 输出 / 缓存读 的堆叠柱状图（内联 SVG），按天悬停或键盘逐日查看明细 |
 | 周 × 小时 | 7 × 24 热力图，5 级强调色深浅，最忙时段写进面板副标题 |
@@ -39,17 +39,53 @@
 | `desktop.control` | 仅调用受控只读操作 `project/list`，读取项目 ID、当前名称和路径，不读取会话正文 |
 | `net.fetch` | 只读余额查询，`net.domains` 限定为受支持的官方服务商域名 |
 
+## 0.2.7 Token units
+
+Token counts, throughput, and chart scales use K, M, and B in both Chinese and
+English. Hover over a number to see its full value or export the raw counts as CSV.
+
+## 0.2.6 Calendar day filters
+
+Select Today or Yesterday in the top date filters. Both use the local time zone
+and group usage by when each turn completes. Today starts at local midnight and
+runs through the time of the query. Yesterday covers the previous calendar day,
+including daylight-saving transitions. The title and CSV filename show the
+selected date.
+
+## 0.2.5 Balance refresh
+
+Use Refresh beside Add configuration to reload provider balances and quotas.
+
+## 0.2.4 Account configuration names
+
+Set an optional name when adding or editing a balance configuration. The balance table shows the name with its AI provider. Leave the API key field blank when editing to keep the saved key. The name is stored with the encrypted configuration.
+
+## 0.2.3 MiniMax quota
+
+For subscription quota, select MiniMax M Plan in the region where you subscribed and enter the subscription Key from the plan page. The plugin reads the shared quota and any available reset times. The MiniMax pay-as-you-go option uses the API Key from the billing platform.
+
+## 0.2.2 本地加密配置
+
+余额配置及 API Key 加密写入插件数据目录。重新打开面板时会读取已保存的 Key 并查询余额。
+升级前只保存渠道的配置需要补填一次 Key，随后会保存为加密配置。
+macOS 使用钥匙串，Windows 使用当前用户的 DPAPI，Linux 使用可用的 Secret Service 和 `secret-tool`。
+系统凭据存储不可用时，界面会提示存储问题。迁移到其他设备或系统用户后需重新设置查询凭据。
+
+## 0.2.1 用量数字
+
+Token 计数、平均每轮和吞吐按界面语言缩写。中文使用「万、亿」等单位，英文使用 K、M、B 等单位。
+悬停数值或查看图表详情时可以读取完整计数。CSV 导出保留完整计数。
+
 ## 0.2.0 AI 渠道余额
 
 支持 PI-Desktop `0.21.0` 及更新版本。首次升级时授权「访问网络」。在 Token 统计页的
 「剩余余额」点击「添加配置」，选择渠道、填写 API Key 后确认。验证通过后，页面立即显示余额。
-渠道配置保存在本机。Key 仅保留在当次插件进程的内存中，重启客户端或重载插件后可点击「填写 Key」。
 已有配置支持更新 Key 和移除。查询只发往所选渠道的官方 HTTPS 接口，拒绝重定向。
 
 | 上游 | 余额口径 |
 | --- | --- |
 | [DeepSeek](https://api-docs.deepseek.com/api/get-user-balance) | 账户余额，保留上游币种 |
-| [MiniMax](https://github.com/MiniMax-AI/cli) | 按量账户可用余额，或 M Plan 周期额度 |
+| [MiniMax M Plan](https://platform.minimaxi.com/docs/m-plan/quickstart) / [MiniMax API](https://github.com/MiniMax-AI/cli) | Subscription quota with an M Plan Key, or account balance with a pay-as-you-go Key |
 | [智谱 BigModel](https://docs.bigmodel.cn/cn/coding-plan/extension/usage-query-plugin) / [Z.ai](https://docs.z.ai/devpack/extension/usage-query-plugin) | Coding Plan 周期额度 |
 | [Moonshot / Kimi 开放平台](https://platform.kimi.ai/docs/api/balance) | 账户可用余额 |
 | [Kimi Code](https://github.com/MoonshotAI/kimi-cli/blob/main/src/kimi_cli/ui/shell/usage.py) | 套餐剩余额度 |
@@ -77,7 +113,7 @@
 
 | 载荷字段 | 去的面板 |
 | --- | --- |
-| `window.days / fromMs / toMs`、`generatedAt`、`truncated.hits` | 页头时间窗、更新时间、`已截断` 徽标 |
+| `window.range / days / fromMs / toMs`、`generatedAt`、`truncated.hits` | 页头时间窗、更新时间、`已截断` 徽标 |
 | `filters.projectId / modelId`、`settings.defaultDays` | 筛选栏当前选中项 |
 | `totals.*` | 关键指标两排瓦片 |
 | `days[]` | 每日趋势（输入 / 输出 / 缓存读堆叠，缺数据的日期留空槽） |
@@ -93,6 +129,9 @@
 - 切换天数 / 项目 / 模型都会重新调用 `stats.snapshot`，参数形如
   `{days: 30}`、`{days: 30, projectId: 12}`、`{days: 30, projectId: 12, modelId: "claude-sonnet-4"}`，
   筛选在插件侧完成，前端不二次过滤。
+- Calendar requests pass `{range: "today"}` or `{range: "yesterday"}` with any
+  project and model filters. The plugin resolves the bounds at query time and
+  returns `window.range` and `window.days: 1`.
 - 手动刷新会查询历史用量和上游余额。页面可见时，每 60 秒轮询历史用量。
 - 导出 CSV 由当前快照在本地生成（按天 / 按项目 / 按模型三段，UTF-8 BOM，
   文件名 `bone-token-stats-30d-2026-10-29.csv`）。
@@ -122,8 +161,8 @@ MIT，全文见 [LICENSE](LICENSE)。Copyright (c) 2026 taokoplay。
 
 - 允许：商用、修改、分发、私有使用，保留版权与许可声明即可。
 - 不含担保：作者不对用量统计的准确性或由此产生的损失负责。
-- 数据边界：历史用量来自宿主。插件设置保存单价、币种、项目显示名和余额渠道。API Key
-  保留在运行内存中，用于向所选服务商发起只读查询。
+- 数据边界：历史用量来自宿主。插件设置保存单价、币种和项目显示名。余额配置在本机加密保存，
+  API Key 仅在查询时发送给所选服务商的官方余额接口。
 
 ## 0.1.1 升级说明
 

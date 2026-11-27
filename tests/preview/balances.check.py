@@ -7,7 +7,9 @@ from playwright.sync_api import expect, sync_playwright
 VIEW = Path(__file__).resolve().parents[2] / "views/index.html"
 CHANNELS = [
     {"id": "deepseek", "label": {"en": "DeepSeek"}},
-    {"id": "minimax", "label": {"en": "MiniMax"}},
+    {"id": "minimax", "label": {"en": "MiniMax M Plan (Global)"}, "keyKind": "minimaxPlan"},
+    {"id": "minimax-cn", "label": {"en": "MiniMax M Plan (China)", "zh-CN": "MiniMax M Plan（中国站）"}, "keyKind": "minimaxPlan"},
+    {"id": "minimax-api-cn", "label": {"en": "MiniMax Pay-as-you-go (China)"}, "keyKind": "minimaxPaygo"},
     {"id": "openrouter", "label": {"en": "OpenRouter"}},
     {"id": "mimo", "label": {"en": "MiMo"}},
     {"id": "custom", "label": {"en": "VeryLongProviderNameForTheNarrowViewport"}},
@@ -16,8 +18,10 @@ STUB = """
 <script>
   window.balanceCalls = 0;
   window.lastBalanceRefresh = false;
+  window.snapshotCalls = 0;
   window.configs = [];
   window.channels = CHANNELS_JSON;
+  let nextId = 0;
   const state = () => ({ ok: true, channels: window.channels, configs: window.configs, checkedAt: Date.now() });
   window.pluginBridge = {
     invoke(channel, input) {
@@ -26,12 +30,26 @@ STUB = """
       if (channel === "stats.balances") {
         window.balanceCalls++;
         window.lastBalanceRefresh = input.refresh;
+        if (input.refresh && window.deferBalanceRefresh) {
+          return new Promise(resolve => { window.finishBalanceRefresh = resolve; });
+        }
         return state();
       }
       if (channel === "stats.balances.save") {
         if (input.apiKey === "invalid-sample") return { ok: false, code: "UNAUTHORIZED" };
-        const row = { id: input.id || "added", channel: input.channel, status: "available",
-          balance: { scope: "account", amounts: [{ currency: "CNY", amount: 0 }] } };
+        if (input.apiKey === "locked-vault-sample") return { ok: false, code: "STORAGE_UNAVAILABLE" };
+        if (input.channel === "minimax-cn" && input.apiKey?.startsWith("sk-api-")) {
+          return { ok: false, code: "MINIMAX_PLAN_KEY_REQUIRED" };
+        }
+        const existing = window.configs.find(config => config.id === input.id);
+        const isPlan = input.channel === "minimax-cn";
+        const remainingPercent = input.apiKey?.endsWith("-personal") ? 29 : 64;
+        const balance = !input.apiKey && existing ? existing.balance : isPlan
+          ? { scope: "plan", windows: [{ period: "5h", remainingPercent }, { period: "week", remainingPercent: 82 }] }
+          : { scope: "account", amounts: [{ currency: "CNY", amount: 0 }] };
+        window.usedNewKey = Boolean(input.apiKey);
+        const row = { id: input.id || `added-${++nextId}`, channel: input.channel,
+          name: input.name, status: "available", balance };
         window.configs = window.configs.filter(config => config.id !== row.id).concat(row);
         return { ok: true, snapshot: state() };
       }
@@ -40,6 +58,7 @@ STUB = """
         return { ok: true, snapshot: state() };
       }
       if (channel === "stats.snapshot") {
+        window.snapshotCalls++;
         window.snapshotDays = input.days;
         return { ok: true, totals: { turns: 0 } };
       }
@@ -74,12 +93,25 @@ with sync_playwright() as pw:
         key = dialog.get_by_label("API Key", exact=True)
         expect(selector).to_be_focused()
         expect(key).to_have_attribute("type", "password")
-        expect(dialog).to_contain_text("重新启动客户端后需要补填")
+        expect(dialog).to_contain_text("配置会加密保存在本机")
+        expect(dialog).to_contain_text("重启后会自动读取 Key")
+        confirm = dialog.get_by_role("button", name="确认", exact=True)
+        selector.select_option(label="MiniMax M Plan（中国站）")
+        hint = dialog.locator("#balance-key-hint")
+        expect(hint).to_contain_text("M Plan 套餐页复制订阅 Key")
+        key.fill("sk-api-synthetic-wrong-type")
+        confirm.click()
+        expect(dialog.get_by_role("alert")).to_contain_text("M Plan 订阅 Key（sk-cp- 开头）")
+        assert page.evaluate("window.configs.length") == 0
+        selector.select_option("minimax-api-cn")
+        expect(hint).to_contain_text("按量付费 API Key")
         selector.select_option("deepseek")
         key.fill("invalid-sample")
-        confirm = dialog.get_by_role("button", name="确认", exact=True)
         confirm.click()
         expect(dialog.get_by_role("alert")).to_contain_text("当前 Key 无权查询")
+        key.fill("locked-vault-sample")
+        confirm.click()
+        expect(dialog.get_by_role("alert")).to_contain_text("无法访问系统凭据存储")
         assert page.evaluate("window.configs.length") == 0
         key.fill("valid-synthetic-key")
         confirm.click()
@@ -133,7 +165,72 @@ with sync_playwright() as pw:
         page.get_by_role("dialog", name="移除配置").get_by_role("button", name="移除", exact=True).click()
         expect(row).to_have_count(0)
         expect(add).to_be_focused()
+
+        add.click()
+        name_field = dialog.get_by_role("textbox", name="配置名称（选填）")
+        name_field.fill("工作账号")
+        selector.select_option("minimax-cn")
+        key.fill("sk-cp-synthetic-subscription")
+        confirm.click()
+        plan = panel.get_by_role("row").filter(has_text="工作账号")
+        expect(plan).to_contain_text("MiniMax M Plan（中国站）")
+        expect(plan).to_contain_text("64%")
+        expect(plan).to_contain_text("82%")
+        expect(dialog).to_have_count(0)
+        expect(add).to_be_focused()
+
+        add.click()
+        selector.select_option("minimax-cn")
+        name_field.fill("个人账号")
+        key.fill("sk-cp-synthetic-personal")
+        confirm.click()
+        personal = panel.get_by_role("row").filter(has_text="个人账号")
+        expect(personal).to_contain_text("29%")
+        expect(plan).to_contain_text("64%")
+
+        plan.get_by_role("button", name="编辑配置 · 工作账号 · MiniMax M Plan（中国站）").click()
+        editor = page.get_by_role("dialog", name="编辑配置")
+        rename = editor.get_by_role("textbox", name="配置名称（选填）")
+        expect(rename).to_have_value("工作账号")
+        expect(editor.get_by_label("API Key", exact=True)).to_have_value("")
+        rename.fill("团队账号")
+        editor.get_by_role("button", name="确认", exact=True).click()
+        updated = panel.get_by_role("row").filter(has_text="团队账号")
+        expect(updated).to_contain_text("64%")
+        expect(personal).to_contain_text("29%")
+        assert page.evaluate("window.usedNewKey") is False
+        expect(updated.get_by_role("button", name="编辑配置 · 团队账号 · MiniMax M Plan（中国站）")).to_be_focused()
+
+        refresh = panel.get_by_role("button", name="刷新余额", exact=True)
+        for width in (320, 720):
+            page.set_viewport_size({"width": width, "height": 850})
+            refresh_box = refresh.bounding_box()
+            add_box = add.bounding_box()
+            assert abs(refresh_box["y"] - add_box["y"]) < 1
+            assert refresh_box["x"] + refresh_box["width"] <= add_box["x"]
+
+        before = page.evaluate("[window.balanceCalls, window.snapshotCalls]")
+        page.evaluate("window.deferBalanceRefresh = true")
+        refresh.click()
+        expect(refresh).to_have_attribute("aria-busy", "true")
+        expect(refresh).to_be_disabled()
+        expect(refresh).to_be_focused()
+        refresh.press("Enter")
+        assert page.evaluate("[window.balanceCalls, window.lastBalanceRefresh]") == [before[0] + 1, True]
+        page.evaluate("window.finishBalanceRefresh({ ok: false, code: 'UNAVAILABLE' })")
+        expect(panel).to_contain_text("操作未完成，请重试")
+        expect(refresh).to_be_enabled()
+        expect(refresh).to_be_focused()
+
+        page.evaluate("""() => {
+          window.deferBalanceRefresh = false;
+          window.configs.find(config => config.name === '团队账号').balance.windows[0].remainingPercent = 53;
+        }""")
+        refresh.click()
+        expect(updated).to_contain_text("53%")
+        expect(refresh).to_be_focused()
+        assert page.evaluate("[window.balanceCalls, window.snapshotCalls]") == [before[0] + 2, before[1]]
         assert not errors, json.dumps(errors, ensure_ascii=False)
-        print("PASS: add, verify, cancel, refresh, enter a replacement key, remove, and responsive layout")
+        print("PASS: balance setup, account names, responsive layout, and dedicated balance refresh")
     finally:
         browser.close()

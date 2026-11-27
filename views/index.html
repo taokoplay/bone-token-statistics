@@ -413,11 +413,13 @@
 
       .chips {
         display: inline-flex;
+        flex-wrap: wrap;
+        max-width: 100%;
         align-items: center;
         gap: 2px;
         padding: 2px;
         border: 1px solid var(--line-soft);
-        border-radius: var(--r-full);
+        border-radius: 15px;
         background: var(--tile);
       }
 
@@ -576,6 +578,17 @@
         align-items: center;
       }
 
+      .balance-panel-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-2);
+        margin-inline-start: auto;
+      }
+
+      .balance-panel-actions .btn[aria-disabled="true"] {
+        cursor: progress;
+      }
+
       .balance-actions {
         display: flex;
         flex-wrap: wrap;
@@ -623,7 +636,7 @@
         max-width: none;
       }
 
-      .balance-key {
+      .balance-input {
         min-width: 0;
         min-height: 32px;
         padding: var(--sp-2);
@@ -634,7 +647,7 @@
         font: inherit;
       }
 
-      .balance-key:focus-visible {
+      .balance-input:focus-visible {
         outline: 2px solid var(--focus);
         outline-offset: 2px;
       }
@@ -1609,10 +1622,12 @@
         "use strict";
 
         const SVG_NS = "http://www.w3.org/2000/svg";
+        const CALENDAR_RANGES = ["today", "yesterday"];
         const CHIP_DAYS = [7, 30, 90, 365];
         const POLL_MS = 60000;
         const PING_TIMEOUT_MS = 2500;
         const BALANCE_TIMEOUT_MS = 28_000;
+        const BALANCE_NAME_MAX_LENGTH = 64;
         const MAX_AXIS_DAYS = 400;
         const MAX_DAY_MS = 86400000;
 
@@ -1632,26 +1647,41 @@
               channel: "AI 渠道",
               pickChannel: "请选择渠道",
               add: "添加配置",
-              updateKey: "更新 Key",
+              refresh: "刷新余额",
+              editConfig: "编辑配置",
+              configColumn: "账号配置",
+              nameLabel: "配置名称（选填）",
+              namePlaceholder: "工作账号",
+              keepKeyPlaceholder: "留空沿用已存 Key",
               enterKey: "填写 Key",
               remove: "移除",
               removeTitle: "移除配置",
               removeMessage: (name) => `要移除「${name}」的余额查询配置吗？`,
               keyLabel: "API Key",
-              keyHint: "Key 仅用于本次运行。重新启动客户端后需要补填。",
+              keyHint: "配置会加密保存在本机。重启后会自动读取 Key。",
+              keyHints: {
+                minimaxPlan: "请在对应站点的 M Plan 套餐页复制订阅 Key（sk-cp- 开头）。",
+                minimaxPaygo: "请使用对应站点的按量付费 API Key（sk-api- 开头）。",
+              },
               cancel: "取消",
               confirm: "确认",
-              saving: "正在验证…",
+              saving: "正在保存…",
               removing: "正在移除…",
               errors: {
                 INVALID_CHANNEL: "请选择一个 AI 渠道。",
                 INVALID_KEY: "请填写有效的 API Key。",
+                INVALID_NAME: "请输入不超过 64 个字符的单行名称。",
                 UNAUTHORIZED: "当前 Key 无权查询，请检查渠道和 Key。",
+                MINIMAX_PLAN_KEY_REQUIRED: "请选择对应站点的 M Plan 订阅 Key（sk-cp- 开头）。",
+                MINIMAX_PAYGO_KEY_REQUIRED: "请填写对应站点的按量付费 API Key（sk-api- 开头）。",
+                MINIMAX_PLAN_UNAVAILABLE: "未查到 MiniMax M Plan 额度。请核对订阅状态、站点和订阅 Key。",
                 PERMISSION_DENIED: "请在插件设置中授予网络访问权限。",
                 UNSUPPORTED: "当前客户端不支持安全的余额查询。",
                 LIMIT_EXCEEDED: "最多添加 16 条余额配置。",
                 NOT_FOUND: "配置已变更，请刷新后重试。",
                 BUSY: "有另一项配置操作进行中，请稍后重试。",
+                STORAGE_UNAVAILABLE: "无法访问系统凭据存储。请解锁后重试。",
+                STORAGE_DAMAGED: "本地加密配置无法读取。请恢复有效的配置文件后重试。",
               },
               error: "操作未完成，请重试。",
               account: "共享账户余额",
@@ -1663,6 +1693,7 @@
               reset: (time) => `${time} 重置`,
               statuses: {
                 unsupported: "当前客户端不支持查询",
+                "minimax-plan-unavailable": "请核对 M Plan 订阅、站点和 Key",
                 "missing-credential": "需要补填 API Key",
                 "permission-denied": "未授予网络权限",
                 unauthorized: "当前 API Key 无权查询",
@@ -1681,6 +1712,7 @@
             exportHint: "导出当前的按天 / 按项目 / 按模型数据",
             exportEmpty: "还没有可导出的数据",
             rangeLabel: "时间范围",
+            calendarRanges: { today: "今日", yesterday: "昨日" },
             days: (n) => `${n} 天`,
             project: "项目",
             model: "模型",
@@ -1811,26 +1843,41 @@
               channel: "AI provider",
               pickChannel: "Select a provider",
               add: "Add configuration",
-              updateKey: "Update key",
+              refresh: "Refresh balances",
+              editConfig: "Edit configuration",
+              configColumn: "Account configuration",
+              nameLabel: "Configuration name (optional)",
+              namePlaceholder: "Work account",
+              keepKeyPlaceholder: "Leave blank to keep the saved key",
               enterKey: "Enter key",
               remove: "Remove",
               removeTitle: "Remove configuration",
               removeMessage: (name) => `Remove the balance configuration for ${name}?`,
               keyLabel: "API key",
-              keyHint: "The key is kept for this run. Enter it again after restarting the app.",
+              keyHint: "This configuration is encrypted on this device. The key is loaded after a restart.",
+              keyHints: {
+                minimaxPlan: "Copy the subscription key (sk-cp- prefix) from M Plan in the selected region.",
+                minimaxPaygo: "Use a pay-as-you-go API key (sk-api- prefix) from the selected region.",
+              },
               cancel: "Cancel",
               confirm: "Confirm",
-              saving: "Verifying…",
+              saving: "Saving…",
               removing: "Removing…",
               errors: {
                 INVALID_CHANNEL: "Select an AI provider.",
                 INVALID_KEY: "Enter a valid API key.",
+                INVALID_NAME: "Enter a single-line name of up to 64 characters.",
                 UNAUTHORIZED: "The key cannot query this provider. Check the provider and key.",
+                MINIMAX_PLAN_KEY_REQUIRED: "Enter an M Plan subscription key (sk-cp- prefix) for the selected region.",
+                MINIMAX_PAYGO_KEY_REQUIRED: "Enter a pay-as-you-go API key (sk-api- prefix) for the selected region.",
+                MINIMAX_PLAN_UNAVAILABLE: "MiniMax M Plan quota is unavailable. Check the subscription, region, and key.",
                 PERMISSION_DENIED: "Grant network access in the plugin settings.",
                 UNSUPPORTED: "This client does not support secure balance queries.",
                 LIMIT_EXCEEDED: "You can add up to 16 balance configurations.",
                 NOT_FOUND: "The configuration changed. Refresh and try again.",
                 BUSY: "Another configuration change is in progress. Try again in a moment.",
+                STORAGE_UNAVAILABLE: "Could not access system credential storage. Unlock it and try again.",
+                STORAGE_DAMAGED: "The encrypted configuration could not be read. Restore a valid configuration file and try again.",
               },
               error: "The operation did not complete. Try again.",
               account: "Shared account balance",
@@ -1842,6 +1889,7 @@
               reset: (time) => `Resets ${time}`,
               statuses: {
                 unsupported: "This client cannot query balances",
+                "minimax-plan-unavailable": "Check the M Plan subscription, region, and key",
                 "missing-credential": "API key required",
                 "permission-denied": "Network permission required",
                 unauthorized: "API key lacks access",
@@ -1860,6 +1908,7 @@
             exportHint: "Export daily / project / model tables",
             exportEmpty: "Nothing to export yet",
             rangeLabel: "Date range",
+            calendarRanges: { today: "Today", yesterday: "Yesterday" },
             days: (n) => `${n} d`,
             project: "Project",
             model: "Model",
@@ -1991,7 +2040,7 @@
           locale: "zh-CN",
           base: "dark",
           appearance: null,
-          days: 30,
+          range: 30,
           projectId: null,
           modelId: null,
           view: null,
@@ -2114,22 +2163,16 @@
           return `${fmtDec(value, digits === undefined ? 1 : digits)}%`;
         }
 
-        function fmtCompact(value) {
-          const v = num(value);
-          const abs = Math.abs(v);
-          if (abs >= 1e9) return `${fmtDec(v / 1e9, 1)}B`;
-          if (abs >= 1e6) return `${fmtDec(v / 1e6, 1)}M`;
-          if (abs >= 1e4) return `${fmtDec(v / 1e3, 1)}K`;
-          return fmtInt(v);
-        }
+        const compactTokenFormatter = new Intl.NumberFormat("en", {
+          notation: "compact",
+          maximumFractionDigits: 2,
+          useGrouping: false,
+        });
 
-        function fmtAxis(value) {
-          const v = num(value);
-          const abs = Math.abs(v);
-          if (abs >= 1e9) return `${fmtDec(v / 1e9, 1)}B`;
-          if (abs >= 1e6) return `${fmtDec(v / 1e6, 1)}M`;
-          if (abs >= 1000) return `${fmtDec(v / 1e3, 1)}K`;
-          return fmtInt(v);
+        function fmtCompact(value, smallDigits = 0) {
+          const number = num(value);
+          if (Math.abs(number) < 1_000) return fmtDec(number, smallDigits);
+          return compactTokenFormatter.format(number);
         }
 
         function fmtMoney(amount, currency) {
@@ -2411,7 +2454,8 @@
           return {
             generatedAt: numOrNull(src.generatedAt ? Date.parse(src.generatedAt) : null),
             window: {
-              days: posNum(rawWindow.days) || state.days,
+              range: CALENDAR_RANGES.includes(rawWindow.range) ? rawWindow.range : null,
+              days: posNum(rawWindow.days) || (typeof state.range === "number" ? state.range : 1),
               fromMs: numOrNull(rawWindow.fromMs),
               requestedFromMs: numOrNull(rawWindow.requestedFromMs),
               toMs: numOrNull(rawWindow.toMs),
@@ -2629,13 +2673,22 @@
 
         // ── header ───────────────────────────────────────────────────────────
 
+        function rangeLabel(range) {
+          return typeof range === "number" ? C().days(range) : C().calendarRanges[range];
+        }
+
+        function rangeSubtitle(span) {
+          const range = span?.range ?? span?.days ?? state.range;
+          const to = fmtDate(span?.toMs);
+          if (typeof range === "number") return C().subtitle(range, fmtDate(span?.fromMs), to);
+          const label = rangeLabel(range);
+          return to ? `${label} · ${to}` : label;
+        }
+
         function renderHeader() {
           const copy = C();
           const view = state.view;
-          const days = view ? view.window.days : state.days;
-          const from = view ? fmtDate(view.window.fromMs) : "";
-          const to = view ? fmtDate(view.window.toMs) : "";
-          refs.sub.textContent = copy.subtitle(days, from, to);
+          refs.sub.textContent = rangeSubtitle(view?.window);
 
           if (view && view.generatedAt !== null) {
             refs.stamp.textContent = copy.updated(fmtTime(view.generatedAt));
@@ -2671,38 +2724,39 @@
         }
 
         function renderChips() {
-          const copy = C();
-          const wanted = state.chipDays.join(",");
+          const ranges = CALENDAR_RANGES.concat(state.chipDays);
+          const wanted = ranges.join(",");
           if (refs.chips.dataset.sig === wanted && state.locale === refs.chips.dataset.locale) {
             return;
           }
           refs.chips.dataset.sig = wanted;
           refs.chips.dataset.locale = state.locale;
           clearNode(refs.chips);
-          for (const days of state.chipDays) {
+          for (const range of ranges) {
+            const label = rangeLabel(range);
             const input = el("input", {
               attr: {
                 type: "radio",
                 name: "stats-days",
-                value: String(days),
-                "aria-label": copy.days(days),
+                value: String(range),
+                "aria-label": label,
               },
               on: {
                 change: () => {
-                  if (input.checked) setDays(days);
+                  if (input.checked) setRange(range);
                 },
               },
             });
-            if (days === state.days) input.checked = true;
+            input.checked = range === state.range;
             refs.chips.appendChild(
-              el("label", { cls: "seg" }, [input, el("span", { text: copy.days(days) })]),
+              el("label", { cls: "seg" }, [input, el("span", { text: label })]),
             );
           }
         }
 
         function syncCheckedChip() {
           const inputs = refs.chips.querySelectorAll("input");
-          for (const input of inputs) input.checked = Number(input.value) === state.days;
+          for (const input of inputs) input.checked = input.value === String(state.range);
         }
 
         function projectOptions() {
@@ -2811,43 +2865,47 @@
           return node;
         }
 
+        function tokenTile(label, value, sub, digits = 0) {
+          return kpiTile(label, fmtCompact(value, digits), sub, { title: fmtDec(value, digits) });
+        }
+
         function renderKpis() {
           const copy = C();
           const view = state.view;
           const totals = view.totals;
-          const days = view.window.days || state.days;
+          const days = view.window.days;
           const usage = el("div", { cls: "kpi-grid" });
           const rhythm = el("div", { cls: "kpi-grid" });
 
           const share = (part, whole) => (whole > 0 ? fmtPct((part / whole) * 100) : "—");
 
           usage.appendChild(
-            kpiTile(copy.kpiTotal, fmtInt(totals.tokens), copy.kpiTotalSub(fmtCompact(totals.tokensWithCacheRead))),
+            tokenTile(copy.kpiTotal, totals.tokens, copy.kpiTotalSub(fmtCompact(totals.tokensWithCacheRead))),
           );
           usage.appendChild(
-            kpiTile(copy.kpiInput, fmtInt(totals.input), copy.shareOfTokens(share(totals.input, totals.tokens))),
+            tokenTile(copy.kpiInput, totals.input, copy.shareOfTokens(share(totals.input, totals.tokens))),
           );
           usage.appendChild(
-            kpiTile(copy.kpiOutput, fmtInt(totals.output), copy.shareOfTokens(share(totals.output, totals.tokens))),
+            tokenTile(copy.kpiOutput, totals.output, copy.shareOfTokens(share(totals.output, totals.tokens))),
           );
           usage.appendChild(
-            kpiTile(
+            tokenTile(
               copy.kpiCacheRead,
-              fmtInt(totals.cacheRead),
+              totals.cacheRead,
               copy.shareOfTokens(share(totals.cacheRead, totals.tokensWithCacheRead)),
             ),
           );
           usage.appendChild(
-            kpiTile(
+            tokenTile(
               copy.kpiCacheWrite,
-              fmtInt(totals.cacheWrite),
+              totals.cacheWrite,
               copy.shareOfTokens(share(totals.cacheWrite, totals.tokens)),
             ),
           );
           usage.appendChild(
-            kpiTile(
+            tokenTile(
               copy.kpiReasoning,
-              fmtInt(totals.reasoning),
+              totals.reasoning,
               copy.shareOfTokens(share(totals.reasoning, totals.tokens)),
             ),
           );
@@ -2876,9 +2934,9 @@
           );
           rhythm.appendChild(kpiTile(copy.kpiActiveDays, fmtInt(totals.activeDays), copy.windowDays(days)));
           rhythm.appendChild(kpiTile(copy.kpiStreak, fmtInt(totals.streak), copy.streakSub));
-          rhythm.appendChild(kpiTile(copy.kpiAvg, fmtInt(Math.round(totals.avgPerTurn)), copy.avgSub));
+          rhythm.appendChild(tokenTile(copy.kpiAvg, totals.avgPerTurn, copy.avgSub));
           rhythm.appendChild(
-            kpiTile(copy.kpiTps, fmtDec(totals.tokensPerSecond, 1), copy.tpsSub),
+            tokenTile(copy.kpiTps, totals.tokensPerSecond, copy.tpsSub, 1),
           );
           rhythm.appendChild(
             kpiTile(
@@ -2933,7 +2991,7 @@
           const fallback = Math.max(260, refs.main.clientWidth - 44);
           const width = Math.max(240, Math.round(measuredWidth || host.clientWidth || fallback));
           const height = Math.min(210, Math.max(140, Math.round(width * 0.42)));
-          const box = { t: 10, r: 6, b: 22, l: 42 };
+          const box = { t: 10, r: 6, b: 22, l: 50 };
           const plotW = Math.max(60, width - box.l - box.r);
           const plotH = Math.max(50, height - box.t - box.b);
           const count = slots.length;
@@ -2958,7 +3016,7 @@
             );
             root.appendChild(
               svgEl("text", { class: "axis-text", x: box.l - 7, y: y + 3.5, "text-anchor": "end" }, [
-                txt(fmtAxis(tick)),
+                txt(fmtCompact(tick)),
               ]),
             );
           }
@@ -3136,8 +3194,8 @@
           }
           for (const index of Array.from(used).sort((a, b) => a - b)) {
             const middle = box.l + index * slotW + slotW / 2;
-            const anchor = index === 0 ? "start" : index === count - 1 ? "end" : "middle";
-            const x = index === 0 ? box.l : index === count - 1 ? box.l + plotW : middle;
+            const anchor = count === 1 ? "middle" : index === 0 ? "start" : index === count - 1 ? "end" : "middle";
+            const x = anchor === "start" ? box.l : anchor === "end" ? box.l + plotW : middle;
             root.appendChild(
               svgEl("text", { class: "axis-text axis-x", x, y: height - 6, "text-anchor": anchor }, [
                 txt(mdLabel(slots[index].date)),
@@ -3383,6 +3441,7 @@
                     el("span", {
                       cls: "num",
                       text: `${fmtCompact(model.tokens)} · ${copy.detailTurns(fmtInt(model.turns))}`,
+                      attr: { title: fmtInt(model.tokens) },
                     }),
                   ]),
                 );
@@ -3445,7 +3504,11 @@
               el("td", {}, [shareCell(model.share)]),
               el("td", { cls: "num", text: fmtInt(model.turns) }),
               el("td", { cls: "num", text: fmtCompact(model.avgPerTurn), attr: { title: fmtInt(model.avgPerTurn) } }),
-              el("td", { cls: "num", text: fmtDec(model.tokensPerSecond, 1) }),
+              el("td", {
+                cls: "num",
+                text: fmtCompact(model.tokensPerSecond, 1),
+                attr: { title: fmtDec(model.tokensPerSecond, 1) },
+              }),
               el("td", { cls: "num", text: fmtCompact(model.cacheRead), attr: { title: fmtInt(model.cacheRead) } }),
             ];
             if (cost) {
@@ -3531,7 +3594,9 @@
 
         function focusBalanceAction(focus) {
           const buttons = Array.from(refs.balances.querySelectorAll("[data-balance-focus]"));
-          (buttons.find(button => button.dataset.balanceFocus === focus) || buttons[0])?.focus();
+          const target = buttons.find(button => button.dataset.balanceFocus === focus);
+          const add = buttons.find(button => button.dataset.balanceFocus === "add");
+          (target || add || buttons[0])?.focus();
         }
 
         function renderBalances() {
@@ -3544,7 +3609,7 @@
           let body;
           if (rows.length) {
             const headers = [
-              el("th", { text: labels.channel, attr: { scope: "col" } }),
+              el("th", { text: labels.configColumn, attr: { scope: "col" } }),
               el("th", { cls: "num", text: labels.remaining, attr: { scope: "col" } }),
             ];
             const totals = new Map();
@@ -3557,14 +3622,18 @@
                 const number = (counts.get(config.channel) || 0) + 1;
                 counts.set(config.channel, number);
                 const provider = balanceChannelLabel(channels.get(config.channel));
-                const label = totals.get(config.channel) > 1 ? `${provider} ${number}` : provider;
-                const keyAction = config.status === "missing-credential" ? labels.enterKey : labels.updateKey;
+                const fallback = totals.get(config.channel) > 1 ? `${provider} ${number}` : provider;
+                const label = config.name || fallback;
+                const subtitle = config.name && config.name !== provider ? provider : "";
+                const actionLabel = subtitle ? `${label} · ${subtitle}` : label;
+                const editAction = config.status === "missing-credential" ? labels.enterKey : labels.editConfig;
                 return el("tr", {}, [
                   el("td", {}, [
                     el("span", { text: label }),
+                    subtitle && el("span", { cls: "dim balance-detail", text: subtitle }),
                     el("div", { cls: "balance-actions" }, [
-                      balanceButton(keyAction, `edit:${config.id}`, () => openBalanceDialog(config, label), `${keyAction} · ${label}`),
-                      balanceButton(labels.remove, `remove:${config.id}`, () => openBalanceDialog(config, label, true), `${labels.remove} · ${label}`),
+                      balanceButton(editAction, `edit:${config.id}`, () => openBalanceDialog(config, label), `${editAction} · ${actionLabel}`),
+                      balanceButton(labels.remove, `remove:${config.id}`, () => openBalanceDialog(config, label, true), `${labels.remove} · ${actionLabel}`),
                     ]),
                   ]),
                   el("td", { cls: "num" }, balanceEntries(config, labels)),
@@ -3572,12 +3641,25 @@
               })),
             ]);
           } else {
-            const message = !snapshot ? labels.loading : snapshot.ok ? labels.empty : labels.error;
+            const message = !snapshot ? labels.loading : snapshot.ok ? labels.empty : labels.errors[snapshot.code] || labels.error;
             body = el("p", { cls: "state-body", text: message });
           }
           const meta = state.balanceLoading ? labels.loading : snapshot?.checkedAt ? copy.updated(fmtTime(snapshot.checkedAt)) : "";
           const section = panel("balances", labels.title, meta, body);
-          if (channels.size) section.firstElementChild.append(balanceButton(labels.add, "add", () => openBalanceDialog()));
+          const busy = String(state.balanceLoading);
+          const refresh = el("button", {
+            cls: "btn",
+            attr: { type: "button", "data-balance-focus": "refresh", "data-busy": busy,
+              "aria-label": labels.refresh, "aria-busy": busy, "aria-disabled": busy },
+            on: { click: () => loadBalances(true) },
+          }, [
+            el("span", { cls: "spinner", attr: { "aria-hidden": "true" } }),
+            el("span", { text: copy.refresh }),
+          ]);
+          section.firstElementChild.append(el("div", { cls: "balance-panel-actions" }, [
+            refresh,
+            channels.size ? balanceButton(labels.add, "add", () => openBalanceDialog()) : null,
+          ]));
           refs.balances.replaceChildren(section);
           if (focus) focusBalanceAction(focus);
         }
@@ -3595,7 +3677,7 @@
           const copy = C().balance;
           const previous = document.activeElement?.dataset.balanceFocus || "add";
           const title = removing ? copy.removeTitle : config
-            ? config.status === "missing-credential" ? copy.enterKey : copy.updateKey : copy.add;
+            ? config.status === "missing-credential" ? copy.enterKey : copy.editConfig : copy.add;
           const error = el("p", { cls: "balance-form-error", attr: { role: "alert" }, hidden: true });
           const cancel = el("button", { cls: "btn", text: copy.cancel, attr: { type: "button" }, on: { click: () => dialog.close() } });
           const submitLabel = removing ? copy.remove : copy.confirm;
@@ -3603,6 +3685,8 @@
           const body = [el("h2", { text: title, attr: { id: "balance-dialog-title" } })];
           let channel;
           let key;
+          let nameField;
+          const needsKey = !config || config.status === "missing-credential";
           if (removing) {
             body.push(el("p", { cls: "state-body", text: copy.removeMessage(label) }));
           } else {
@@ -3612,14 +3696,29 @@
                 el("option", { text: balanceChannelLabel(option), attr: { value: option.id } })),
             ]);
             channel.value = config?.channel || "";
-            key = el("input", { cls: "balance-key", attr: {
-              type: "password", required: "", maxlength: 4096, autocomplete: "off", spellcheck: "false",
+            nameField = el("input", { cls: "balance-input", attr: {
+              type: "text", maxlength: BALANCE_NAME_MAX_LENGTH, placeholder: copy.namePlaceholder, autocomplete: "off",
+            } });
+            nameField.value = config?.name || "";
+            key = el("input", { cls: "balance-input", attr: {
+              type: "password", required: needsKey, maxlength: 4096, autocomplete: "off", spellcheck: "false",
+              placeholder: needsKey ? undefined : copy.keepKeyPlaceholder,
               autocapitalize: "none", "aria-describedby": "balance-key-hint",
             } });
+            const hint = el("p", { cls: "panel-meta", attr: { id: "balance-key-hint" } });
+            const updateKeyHint = () => {
+              const selected = state.balances.channels.find(option => option.id === channel.value);
+              const channelHint = copy.keyHints[selected?.keyKind];
+              hint.textContent = channelHint ? `${channelHint} ${copy.keyHint}` : copy.keyHint;
+              error.hidden = true;
+            };
+            channel.addEventListener("change", updateKeyHint);
+            updateKeyHint();
             body.push(
               el("label", { cls: "balance-field" }, [el("span", { cls: "field-label", text: copy.channel }), el("span", { cls: "select-wrap" }, [channel])]),
+              el("label", { cls: "balance-field" }, [el("span", { cls: "field-label", text: copy.nameLabel }), nameField]),
               el("label", { cls: "balance-field" }, [el("span", { cls: "field-label", text: copy.keyLabel }), key]),
-              el("p", { cls: "panel-meta", text: copy.keyHint, attr: { id: "balance-key-hint" } }),
+              hint,
             );
           }
           const form = el("form", { cls: "balance-form", attr: { method: "dialog", autocomplete: "off" } }, [
@@ -3637,11 +3736,11 @@
             event.preventDefault();
             if (submit.disabled) return;
             const payload = removing ? { id: config.id } : {
-              ...(config ? { id: config.id } : {}), channel: channel.value, apiKey: key.value,
+              ...(config ? { id: config.id } : {}), channel: channel.value, name: nameField.value, apiKey: key.value,
             };
             error.hidden = true;
             cancel.disabled = submit.disabled = true;
-            if (channel) channel.disabled = key.disabled = true;
+            if (channel) channel.disabled = key.disabled = nameField.disabled = true;
             submit.textContent = removing ? copy.removing : copy.saving;
             form.setAttribute("aria-busy", "true");
             const channelName = removing ? "stats.balances.remove" : "stats.balances.save";
@@ -3655,17 +3754,17 @@
             cancel.disabled = submit.disabled = false;
             if (channel) {
               channel.disabled = Boolean(config);
-              key.disabled = false;
+              key.disabled = nameField.disabled = false;
             }
             submit.textContent = submitLabel;
             form.removeAttribute("aria-busy");
             error.textContent = copy.errors[result?.code] || copy.error;
             error.hidden = false;
-            (key || submit).focus();
+            (result?.code === "INVALID_NAME" ? nameField : key || submit)?.focus();
           });
           dialog.replaceChildren(form);
           dialog.showModal();
-          (removing ? cancel : config ? key : channel).focus();
+          (removing ? cancel : config ? (needsKey ? key : nameField) : channel).focus();
         }
 
         async function loadBalances(refresh = false) {
@@ -3801,13 +3900,13 @@
         function emptyState() {
           const copy = C();
           const actions = el("div", { cls: "state-actions" });
-          if (state.days !== 365) {
+          if (state.range !== 365) {
             actions.appendChild(
               el("button", {
                 cls: "btn",
                 attr: { type: "button" },
                 text: copy.emptyCta365,
-                on: { click: () => setDays(365) },
+                on: { click: () => setRange(365) },
               }),
             );
           }
@@ -3995,22 +4094,16 @@
           load({});
         }
 
-        function setDays(days) {
-          const next = Math.max(1, Math.min(365, Math.round(Number(days) || 30)));
-          if (next === state.days) {
-            syncCheckedChip();
-            return;
-          }
-          state.days = next;
-          if (state.chipDays.indexOf(next) === -1) {
-            state.chipDays = CHIP_DAYS.concat([next]).sort((a, b) => a - b);
-          }
+        function setRange(range) {
+          if (range === state.range) return;
+          state.range = range;
           renderFilters();
           load({});
         }
 
         function snapshotParams(force) {
-          const payload = { days: state.days };
+          const range = state.range;
+          const payload = typeof range === "number" ? { days: range } : { range };
           if (state.projectId !== null) payload.projectId = state.projectId;
           if (state.modelId !== null) payload.modelId = state.modelId;
           if (force) payload.force = true;
@@ -4091,6 +4184,7 @@
           state.error = null;
           state.view = normalize(answer);
           state.axis = buildDayAxis(state.view);
+          if (state.barFocus >= state.axis.length) state.barFocus = -1;
           // The payload echoes the filters it applied. A reported filter wins;
           // a null echo never clears a selection the user just made (an older
           // host, or a stub, may not echo at all).
@@ -4144,10 +4238,7 @@
           const view = state.view;
           const lines = [];
           const push = (cells) => lines.push(cells.map(csvCell).join(","));
-          const days = view.window.days || state.days;
-          push([
-            `${copy.csvComment} BoneTokenStatistics · ${copy.subtitle(days, fmtDate(view.window.fromMs), fmtDate(view.window.toMs))}`,
-          ]);
+          push([`${copy.csvComment} BoneTokenStatistics · ${rangeSubtitle(view.window)}`]);
           push([`${copy.csvComment} ${copy.csvGenerated(csvTimestamp(view.generatedAt))}`]);
           lines.push("");
           push([`${copy.csvComment} ${copy.csvDaily}`]);
@@ -4210,7 +4301,7 @@
           if (!state.view) return;
           const copy = C();
           const view = state.view;
-          const days = view.window.days || state.days;
+          const range = view.window.range ?? `${view.window.days}d`;
           const endKey = keyOf(
             view.window.toMs !== null ? new Date(view.window.toMs) : new Date(),
           );
@@ -4226,7 +4317,7 @@
             const url = URL.createObjectURL(blob);
             const anchor = document.createElement("a");
             anchor.href = url;
-            anchor.download = `bone-token-stats-${days}d-${endKey}.csv`;
+            anchor.download = `bone-token-stats-${range}-${endKey}.csv`;
             anchor.rel = "noopener";
             anchor.style.display = "none";
             document.body.appendChild(anchor);
@@ -4395,11 +4486,12 @@
             withTimeout(call("stats.ping"), PING_TIMEOUT_MS).then((ping) => {
               if (ping && ping.ok === true) {
                 const defaultDays = Number(ping.defaultDays);
-                if (CHIP_DAYS.indexOf(defaultDays) !== -1 || (defaultDays >= 1 && defaultDays <= 365)) {
-                  if (!state.chipDays.includes(defaultDays)) {
-                    state.chipDays = CHIP_DAYS.concat([defaultDays]).sort((a, b) => a - b);
+                if (defaultDays >= 1 && defaultDays <= 365) {
+                  const days = Math.round(defaultDays);
+                  if (!CHIP_DAYS.includes(days)) {
+                    state.chipDays = CHIP_DAYS.concat([days]).sort((a, b) => a - b);
                   }
-                  state.days = Math.max(1, Math.min(365, Math.round(defaultDays)));
+                  if (state.seq === 0) state.range = days;
                   renderFilters();
                 }
               }
