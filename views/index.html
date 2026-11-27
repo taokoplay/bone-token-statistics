@@ -539,6 +539,10 @@
         padding: 0 var(--pad);
       }
 
+      #balances:not(:empty) {
+        margin-top: var(--sp-3);
+      }
+
       .panel {
         min-width: 0;
         padding: var(--sp-3);
@@ -566,6 +570,85 @@
         color: var(--fg-4);
         font-size: var(--fs-xs);
         font-variant-numeric: tabular-nums;
+      }
+
+      .panel--balances .panel-head {
+        align-items: center;
+      }
+
+      .balance-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-1) var(--sp-2);
+        margin-top: var(--sp-1);
+      }
+
+      .balance-actions .btn-quiet {
+        padding-inline: 0;
+      }
+
+      .balance-dialog {
+        width: min(410px, calc(100% - 2 * var(--pad)));
+        max-height: calc(100% - 2 * var(--pad));
+        margin: auto;
+        padding: var(--sp-4);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        background: var(--surface);
+        color: var(--fg);
+      }
+
+      .balance-dialog::backdrop {
+        background: rgb(0 0 0 / 48%);
+      }
+
+      .balance-form {
+        display: grid;
+        gap: var(--sp-3);
+      }
+
+      .balance-form h2 {
+        font-size: var(--fs-md);
+        font-weight: 560;
+      }
+
+      .balance-field {
+        display: grid;
+        gap: var(--sp-1);
+        min-width: 0;
+      }
+
+      .balance-field .select {
+        width: 100%;
+        max-width: none;
+      }
+
+      .balance-key {
+        min-width: 0;
+        min-height: 32px;
+        padding: var(--sp-2);
+        border: 1px solid var(--line);
+        border-radius: var(--r-xs);
+        background: var(--tile);
+        color: var(--fg);
+        font: inherit;
+      }
+
+      .balance-key:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      .balance-form-error {
+        color: var(--fg);
+        font-size: var(--fs-xs);
+      }
+
+      .balance-form-footer {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: var(--sp-2);
       }
 
       .panel-foot {
@@ -908,6 +991,39 @@
 
       .tbl--models {
         min-width: 620px;
+      }
+
+      .tbl--balances {
+        min-width: 0;
+        table-layout: fixed;
+      }
+
+      .tbl.tbl--balances th,
+      .tbl.tbl--balances td {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .tbl--balances thead .num {
+        width: 42%;
+      }
+
+      .balance-entry {
+        display: grid;
+        gap: 2px;
+      }
+
+      .balance-entry + .balance-entry {
+        margin-top: var(--sp-2);
+      }
+
+      .balance-value {
+        font-weight: 560;
+      }
+
+      .balance-detail {
+        display: block;
+        font-size: var(--fs-2xs);
       }
 
       .tbl th,
@@ -1479,10 +1595,14 @@
         <button type="button" class="btn-quiet" id="btn-clear" hidden>清除筛选</button>
       </div>
 
-      <main class="main" id="main"></main>
+      <main>
+        <div class="main" id="main"></div>
+        <div class="main" id="balances" aria-live="polite"></div>
+      </main>
     </div>
 
     <div class="tip" id="tip" role="tooltip" hidden></div>
+    <dialog class="balance-dialog" id="balance-dialog" aria-labelledby="balance-dialog-title"></dialog>
 
     <script>
       (function () {
@@ -1492,6 +1612,7 @@
         const CHIP_DAYS = [7, 30, 90, 365];
         const POLL_MS = 60000;
         const PING_TIMEOUT_MS = 2500;
+        const BALANCE_TIMEOUT_MS = 28_000;
         const MAX_AXIS_DAYS = 400;
         const MAX_DAY_MS = 86400000;
 
@@ -1503,6 +1624,51 @@
         const COPY = {
           "zh-CN": {
             title: "Token 统计",
+            balance: {
+              title: "剩余余额",
+              remaining: "余额 / 额度",
+              loading: "正在查询上游余额…",
+              empty: "添加 AI 渠道和 API Key 后，即可查询余额和额度。",
+              channel: "AI 渠道",
+              pickChannel: "请选择渠道",
+              add: "添加配置",
+              updateKey: "更新 Key",
+              enterKey: "填写 Key",
+              remove: "移除",
+              removeTitle: "移除配置",
+              removeMessage: (name) => `要移除「${name}」的余额查询配置吗？`,
+              keyLabel: "API Key",
+              keyHint: "Key 仅用于本次运行。重新启动客户端后需要补填。",
+              cancel: "取消",
+              confirm: "确认",
+              saving: "正在验证…",
+              removing: "正在移除…",
+              errors: {
+                INVALID_CHANNEL: "请选择一个 AI 渠道。",
+                INVALID_KEY: "请填写有效的 API Key。",
+                UNAUTHORIZED: "当前 Key 无权查询，请检查渠道和 Key。",
+                PERMISSION_DENIED: "请在插件设置中授予网络访问权限。",
+                UNSUPPORTED: "当前客户端不支持安全的余额查询。",
+                LIMIT_EXCEEDED: "最多添加 16 条余额配置。",
+                NOT_FOUND: "配置已变更，请刷新后重试。",
+                BUSY: "有另一项配置操作进行中，请稍后重试。",
+              },
+              error: "操作未完成，请重试。",
+              account: "共享账户余额",
+              key: "API Key 剩余额度",
+              unlimited: "不限额",
+              credits: (value) => `${value} 积分`,
+              planCredits: "套餐剩余积分",
+              periods: { "5h": "5 小时", week: "每周", other: "套餐" },
+              reset: (time) => `${time} 重置`,
+              statuses: {
+                unsupported: "当前客户端不支持查询",
+                "missing-credential": "需要补填 API Key",
+                "permission-denied": "未授予网络权限",
+                unauthorized: "当前 API Key 无权查询",
+                unavailable: "上游余额暂不可用",
+              },
+            },
             subtitle: (days, from, to) =>
               from && to ? `最近 ${days} 天 · ${from} → ${to}` : `最近 ${days} 天`,
             updated: (time) => `更新于 ${time}`,
@@ -1637,6 +1803,51 @@
           },
           en: {
             title: "Token Statistics",
+            balance: {
+              title: "Remaining balance",
+              remaining: "Balance / quota",
+              loading: "Checking provider balances…",
+              empty: "Add an AI provider and API key to check its balance or quota.",
+              channel: "AI provider",
+              pickChannel: "Select a provider",
+              add: "Add configuration",
+              updateKey: "Update key",
+              enterKey: "Enter key",
+              remove: "Remove",
+              removeTitle: "Remove configuration",
+              removeMessage: (name) => `Remove the balance configuration for ${name}?`,
+              keyLabel: "API key",
+              keyHint: "The key is kept for this run. Enter it again after restarting the app.",
+              cancel: "Cancel",
+              confirm: "Confirm",
+              saving: "Verifying…",
+              removing: "Removing…",
+              errors: {
+                INVALID_CHANNEL: "Select an AI provider.",
+                INVALID_KEY: "Enter a valid API key.",
+                UNAUTHORIZED: "The key cannot query this provider. Check the provider and key.",
+                PERMISSION_DENIED: "Grant network access in the plugin settings.",
+                UNSUPPORTED: "This client does not support secure balance queries.",
+                LIMIT_EXCEEDED: "You can add up to 16 balance configurations.",
+                NOT_FOUND: "The configuration changed. Refresh and try again.",
+                BUSY: "Another configuration change is in progress. Try again in a moment.",
+              },
+              error: "The operation did not complete. Try again.",
+              account: "Shared account balance",
+              key: "Remaining API key quota",
+              unlimited: "Unlimited",
+              credits: (value) => `${value} credits`,
+              planCredits: "Remaining plan credits",
+              periods: { "5h": "5 hours", week: "Weekly", other: "Plan" },
+              reset: (time) => `Resets ${time}`,
+              statuses: {
+                unsupported: "This client cannot query balances",
+                "missing-credential": "API key required",
+                "permission-denied": "Network permission required",
+                unauthorized: "API key lacks access",
+                unavailable: "Provider balance unavailable",
+              },
+            },
             subtitle: (days, from, to) =>
               from && to ? `Last ${days} days · ${from} → ${to}` : `Last ${days} days`,
             updated: (time) => `Updated ${time}`,
@@ -1784,6 +1995,9 @@
           projectId: null,
           modelId: null,
           view: null,
+          balances: null,
+          balanceLoading: false,
+          balanceRequest: 0,
           axis: [],
           error: null,
           inflight: false,
@@ -1812,6 +2026,8 @@
           refresh: document.getElementById("btn-refresh"),
           refreshLabel: document.getElementById("lbl-refresh"),
           exportBtn: document.getElementById("btn-export"),
+          balances: document.getElementById("balances"),
+          balanceDialog: document.getElementById("balance-dialog"),
           main: document.getElementById("main"),
           tip: document.getElementById("tip"),
         };
@@ -3259,6 +3475,210 @@
           return panel("models", copy.secModels, copy.modelsMeta(models.length), body);
         }
 
+        // ── balances ─────────────────────────────────────────────────────────
+
+        function balanceEntries(model, copy) {
+          const entry = (value, label, resetsAt) => {
+            let detail = label;
+            if (resetsAt !== undefined) {
+              const time = nfDate({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(resetsAt));
+              detail = `${label} · ${copy.reset(time)}`;
+            }
+            return el("div", { cls: "balance-entry" }, [
+              el("span", { cls: "balance-value", text: value }),
+              el("span", { cls: "dim balance-detail", text: detail }),
+            ]);
+          };
+          if (model.status !== "available" || !model.balance) {
+            return [entry("—", copy.statuses[model.status] || copy.statuses.unavailable)];
+          }
+          const balance = model.balance;
+          const money = (amount, currency) => {
+            if (!currency) return nf({ maximumFractionDigits: 6 }).format(amount);
+            return nf({ style: "currency", currency, currencyDisplay: "code", maximumFractionDigits: 6 }).format(amount);
+          };
+          if (balance.scope === "credits") {
+            const value = copy.credits(nf({ maximumFractionDigits: 6 }).format(balance.remaining));
+            return [entry(value, balance.account ? copy.account : copy.planCredits, balance.resetsAt)];
+          }
+          if (balance.scope === "account") {
+            const value = balance.amounts.map(({ amount, currency }) => money(amount, currency)).join(" · ");
+            return [entry(value, copy.account)];
+          }
+          if (balance.scope === "key") {
+            const value = balance.remaining === null ? copy.unlimited : money(balance.remaining, balance.currency);
+            return [entry(value, copy.key)];
+          }
+          return balance.windows.map(({ period, remainingPercent, resetsAt, model }) => {
+            const value = remainingPercent === null ? copy.unlimited : nf({ style: "percent", maximumFractionDigits: 1 }).format(remainingPercent / 100);
+            const label = copy.periods[period] || copy.periods.other;
+            return entry(value, model ? `${model} · ${label}` : label, resetsAt);
+          });
+        }
+
+        function balanceChannelLabel(channel) {
+          return channel.label[state.locale] || channel.label.en;
+        }
+
+        function balanceButton(text, focus, action, label) {
+          return el("button", {
+            cls: focus === "add" ? "btn" : "btn-quiet",
+            text,
+            attr: { type: "button", "data-balance-focus": focus, "aria-label": label },
+            on: { click: action },
+          });
+        }
+
+        function focusBalanceAction(focus) {
+          const buttons = Array.from(refs.balances.querySelectorAll("[data-balance-focus]"));
+          (buttons.find(button => button.dataset.balanceFocus === focus) || buttons[0])?.focus();
+        }
+
+        function renderBalances() {
+          const copy = C();
+          const labels = copy.balance;
+          const snapshot = state.balances;
+          const channels = new Map((snapshot?.channels || []).map(channel => [channel.id, channel]));
+          const rows = (snapshot?.configs || []).filter(config => channels.has(config.channel));
+          const focus = document.activeElement?.dataset.balanceFocus;
+          let body;
+          if (rows.length) {
+            const headers = [
+              el("th", { text: labels.channel, attr: { scope: "col" } }),
+              el("th", { cls: "num", text: labels.remaining, attr: { scope: "col" } }),
+            ];
+            const totals = new Map();
+            const counts = new Map();
+            for (const { channel } of rows) totals.set(channel, (totals.get(channel) || 0) + 1);
+            body = el("table", { cls: "tbl tbl--balances" }, [
+              el("caption", { cls: "sr-only", text: labels.title }),
+              el("thead", {}, [el("tr", {}, headers)]),
+              el("tbody", {}, rows.map(config => {
+                const number = (counts.get(config.channel) || 0) + 1;
+                counts.set(config.channel, number);
+                const provider = balanceChannelLabel(channels.get(config.channel));
+                const label = totals.get(config.channel) > 1 ? `${provider} ${number}` : provider;
+                const keyAction = config.status === "missing-credential" ? labels.enterKey : labels.updateKey;
+                return el("tr", {}, [
+                  el("td", {}, [
+                    el("span", { text: label }),
+                    el("div", { cls: "balance-actions" }, [
+                      balanceButton(keyAction, `edit:${config.id}`, () => openBalanceDialog(config, label), `${keyAction} · ${label}`),
+                      balanceButton(labels.remove, `remove:${config.id}`, () => openBalanceDialog(config, label, true), `${labels.remove} · ${label}`),
+                    ]),
+                  ]),
+                  el("td", { cls: "num" }, balanceEntries(config, labels)),
+                ]);
+              })),
+            ]);
+          } else {
+            const message = !snapshot ? labels.loading : snapshot.ok ? labels.empty : labels.error;
+            body = el("p", { cls: "state-body", text: message });
+          }
+          const meta = state.balanceLoading ? labels.loading : snapshot?.checkedAt ? copy.updated(fmtTime(snapshot.checkedAt)) : "";
+          const section = panel("balances", labels.title, meta, body);
+          if (channels.size) section.firstElementChild.append(balanceButton(labels.add, "add", () => openBalanceDialog()));
+          refs.balances.replaceChildren(section);
+          if (focus) focusBalanceAction(focus);
+        }
+
+        function acceptBalanceSnapshot(snapshot) {
+          state.balanceRequest += 1;
+          state.balanceLoading = false;
+          state.balances = snapshot;
+          renderBalances();
+        }
+
+        function openBalanceDialog(config, label, removing = false) {
+          const dialog = refs.balanceDialog;
+          if (dialog.open) return;
+          const copy = C().balance;
+          const previous = document.activeElement?.dataset.balanceFocus || "add";
+          const title = removing ? copy.removeTitle : config
+            ? config.status === "missing-credential" ? copy.enterKey : copy.updateKey : copy.add;
+          const error = el("p", { cls: "balance-form-error", attr: { role: "alert" }, hidden: true });
+          const cancel = el("button", { cls: "btn", text: copy.cancel, attr: { type: "button" }, on: { click: () => dialog.close() } });
+          const submitLabel = removing ? copy.remove : copy.confirm;
+          const submit = el("button", { cls: "btn btn--solid", text: submitLabel, attr: { type: "submit" } });
+          const body = [el("h2", { text: title, attr: { id: "balance-dialog-title" } })];
+          let channel;
+          let key;
+          if (removing) {
+            body.push(el("p", { cls: "state-body", text: copy.removeMessage(label) }));
+          } else {
+            channel = el("select", { cls: "select", attr: { required: "", disabled: Boolean(config) } }, [
+              el("option", { text: copy.pickChannel, attr: { value: "" } }),
+              ...state.balances.channels.map(option =>
+                el("option", { text: balanceChannelLabel(option), attr: { value: option.id } })),
+            ]);
+            channel.value = config?.channel || "";
+            key = el("input", { cls: "balance-key", attr: {
+              type: "password", required: "", maxlength: 4096, autocomplete: "off", spellcheck: "false",
+              autocapitalize: "none", "aria-describedby": "balance-key-hint",
+            } });
+            body.push(
+              el("label", { cls: "balance-field" }, [el("span", { cls: "field-label", text: copy.channel }), el("span", { cls: "select-wrap" }, [channel])]),
+              el("label", { cls: "balance-field" }, [el("span", { cls: "field-label", text: copy.keyLabel }), key]),
+              el("p", { cls: "panel-meta", text: copy.keyHint, attr: { id: "balance-key-hint" } }),
+            );
+          }
+          const form = el("form", { cls: "balance-form", attr: { method: "dialog", autocomplete: "off" } }, [
+            ...body, error, el("div", { cls: "balance-form-footer" }, [cancel, submit]),
+          ]);
+          const preventCancel = event => { if (submit.disabled) event.preventDefault(); };
+          dialog.addEventListener("cancel", preventCancel);
+          dialog.addEventListener("close", () => {
+            if (key) key.value = "";
+            dialog.removeEventListener("cancel", preventCancel);
+            dialog.replaceChildren();
+            focusBalanceAction(previous);
+          }, { once: true });
+          form.addEventListener("submit", async event => {
+            event.preventDefault();
+            if (submit.disabled) return;
+            const payload = removing ? { id: config.id } : {
+              ...(config ? { id: config.id } : {}), channel: channel.value, apiKey: key.value,
+            };
+            error.hidden = true;
+            cancel.disabled = submit.disabled = true;
+            if (channel) channel.disabled = key.disabled = true;
+            submit.textContent = removing ? copy.removing : copy.saving;
+            form.setAttribute("aria-busy", "true");
+            const channelName = removing ? "stats.balances.remove" : "stats.balances.save";
+            const result = await withTimeout(call(channelName, payload), BALANCE_TIMEOUT_MS);
+            if (!form.isConnected) return;
+            if (result?.ok && result.snapshot) {
+              acceptBalanceSnapshot(result.snapshot);
+              dialog.close();
+              return;
+            }
+            cancel.disabled = submit.disabled = false;
+            if (channel) {
+              channel.disabled = Boolean(config);
+              key.disabled = false;
+            }
+            submit.textContent = submitLabel;
+            form.removeAttribute("aria-busy");
+            error.textContent = copy.errors[result?.code] || copy.error;
+            error.hidden = false;
+            (key || submit).focus();
+          });
+          dialog.replaceChildren(form);
+          dialog.showModal();
+          (removing ? cancel : config ? key : channel).focus();
+        }
+
+        async function loadBalances(refresh = false) {
+          if (state.balanceLoading) return;
+          const request = ++state.balanceRequest;
+          state.balanceLoading = true;
+          renderBalances();
+          const result = await withTimeout(call("stats.balances", { refresh }), BALANCE_TIMEOUT_MS);
+          if (request !== state.balanceRequest) return;
+          acceptBalanceSnapshot(result || { ok: false });
+        }
+
+
         // ── sessions ─────────────────────────────────────────────────────────
 
         function renderSessions() {
@@ -3852,6 +4272,7 @@
             renderFilters();
             renderHeader();
             renderMain({ animate: false });
+            renderBalances();
             updateButtons();
           }
         }
@@ -3859,7 +4280,10 @@
         // ── wiring ───────────────────────────────────────────────────────────
 
         function bindEvents() {
-          refs.refresh.addEventListener("click", () => load({ force: true }));
+          refs.refresh.addEventListener("click", () => {
+            load({ force: true });
+            loadBalances(true);
+          });
           refs.exportBtn.addEventListener("click", exportCsv);
           refs.clear.addEventListener("click", clearFilters);
 
@@ -3980,6 +4404,7 @@
                 }
               }
               load({});
+              loadBalances();
             });
           });
           scheduleNext();

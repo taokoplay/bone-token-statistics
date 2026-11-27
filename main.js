@@ -3,11 +3,9 @@
 /**
  * BoneTokenStatistics — plugin process (`bone.token.statistics`).
  *
- * The host hands out one shape for this job: read-only, completed-turn token
- * counters (`pi.usage.listTurns`, permission `usage.read`). Everything the view
- * draws is computed here, in the plugin process, and shipped as one payload —
- * the renderer never pages, never aggregates and never talks to the host but
- * through `stats.*` channels.
+ * The host supplies completed-turn counters (`pi.usage.listTurns`). The
+ * plugin aggregates that history and queries balance endpoints with keys
+ * supplied by the user. The view reads both through `stats.*` channels.
  *
  * Nothing is invented: no rates means no cost, an unknown project id stays
  * `项目 #id`, and a capped read is reported as truncated instead of silently
@@ -16,6 +14,14 @@
 
 const { summarize } = require("./lib/aggregate");
 const { estimateCost, normalizeRates } = require("./lib/cost");
+const { createBalances } = require("./lib/model-balances");
+
+const balances = createBalances({
+  getSettings: () => pi.plugin.getSettings(),
+  setSettings: (patch) => pi.plugin.setSettings(patch),
+  getCapabilities: () => pi.net?.getCapabilities?.(),
+  fetch: (request) => pi.net.fetch(request),
+});
 
 const DAY_MS = 86_400_000;
 /** Host page size ceiling is 500. */
@@ -312,12 +318,15 @@ async function buildSnapshot(input = {}) {
 // ── 通道 ────────────────────────────────────────────────────────────────────
 
 const CHANNELS = {
-  /** The whole dashboard in one answer. */
+  "stats.balances": (payload) => balances.list(payload),
+  "stats.balances.save": (payload) => balances.save(payload),
+  "stats.balances.remove": (payload) => balances.remove(payload),
+  /** The historical usage dashboard in one answer. */
   "stats.snapshot": (payload) => buildSnapshot(payload ?? {}),
   /** Cheap identity check for the view header. */
   "stats.ping": async () => {
     const settings = await readSettings();
-    return { ok: true, version: "0.1.2", defaultDays: settings.defaultDays, currency: settings.currency };
+    return { ok: true, version: "0.2.0", defaultDays: settings.defaultDays, currency: settings.currency };
   },
 };
 
@@ -350,6 +359,7 @@ async function onLoad() {
 
 async function onUnload() {
   snapshotCache = null;
+  balances.clear();
   try {
     await pi.commands.unregister("bone.stats.open");
   } catch {

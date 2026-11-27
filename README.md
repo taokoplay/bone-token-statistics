@@ -2,10 +2,10 @@
 
 跨所有项目的 token 用量统计视图（插件 id `bone.token.statistics`）。工作面板里的
 一页只读仪表盘：按时间、项目、模型、会话汇总已完成轮次的 tokens、轮次、会话与
-可选的成本估算。
+可选的成本估算，以及为指定 AI 渠道查询的上游余额和额度。
 
 - 视图入口：`contributes.views[0]` → `views/index.html`（单文件，无构建步骤）
-- 面板通道：`stats.snapshot`（整份快照）、`stats.ping`（默认天数 / 币种）
+- 面板通道：`stats.snapshot`（历史用量快照）、`stats.balances`（余额）、`stats.balances.save`（添加或验证 Key）、`stats.balances.remove`（移除配置）、`stats.ping`（默认天数 / 币种）
 - 打开方式：命令「BoneTokenStatistics: 打开统计」（`bone.stats.open`）
 
 ## 界面预览
@@ -25,6 +25,7 @@
 | 模型 | 模型 id、provider、tokens、占比、轮次、平均每轮、tokens/s、缓存读；有成本时再加金额 |
 | 会话 | 用量最高的会话（插件侧最多 20 条）：标题、项目、模型、tokens、轮次、最近活动 |
 | 说明 | 原样渲染宿主给的 `notes`（截断、无单价、无法命名项目等） |
+| 剩余余额 | 按添加的 AI 渠道配置展示账户余额、API Key 限额或套餐剩余额度 |
 
 数字来源约定：`tokens = 输入 + 输出 + 缓存写 + 推理`；`cacheRead` 单独统计、不计入
 `tokens`，`tokensWithCacheRead` 只用于「含缓存读」这类副标题。
@@ -36,8 +37,28 @@
 | `ui.view` | 声明并打开工作面板视图 |
 | `usage.read` | 只读 `pi.usage.listTurns`（已完成轮次的 token 计数，不读消息正文） |
 | `desktop.control` | 仅调用受控只读操作 `project/list`，读取项目 ID、当前名称和路径，不读取会话正文 |
+| `net.fetch` | 只读余额查询，`net.domains` 限定为受支持的官方服务商域名 |
 
-插件不写任何数据，不访问网络，不读消息内容。
+## 0.2.0 AI 渠道余额
+
+支持 PI-Desktop `0.21.0` 及更新版本。首次升级时授权「访问网络」。在 Token 统计页的
+「剩余余额」点击「添加配置」，选择渠道、填写 API Key 后确认。验证通过后，页面立即显示余额。
+渠道配置保存在本机。Key 仅保留在当次插件进程的内存中，重启客户端或重载插件后可点击「填写 Key」。
+已有配置支持更新 Key 和移除。查询只发往所选渠道的官方 HTTPS 接口，拒绝重定向。
+
+| 上游 | 余额口径 |
+| --- | --- |
+| [DeepSeek](https://api-docs.deepseek.com/api/get-user-balance) | 账户余额，保留上游币种 |
+| [MiniMax](https://github.com/MiniMax-AI/cli) | 按量账户可用余额，或 M Plan 周期额度 |
+| [智谱 BigModel](https://docs.bigmodel.cn/cn/coding-plan/extension/usage-query-plugin) / [Z.ai](https://docs.z.ai/devpack/extension/usage-query-plugin) | Coding Plan 周期额度 |
+| [Moonshot / Kimi 开放平台](https://platform.kimi.ai/docs/api/balance) | 账户可用余额 |
+| [Kimi Code](https://github.com/MoonshotAI/kimi-cli/blob/main/src/kimi_cli/ui/shell/usage.py) | 套餐剩余额度 |
+| [OpenRouter](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key) | 当前 API Key 的美元限额 |
+| [小米 MiMo](https://mimo.mi.com/static/docs/api/asset/balance-get.md) / [Token Plan](https://mimo.mi.com/static/docs/api/asset/credits-get.md) | 按量账户可用余额，或当前账期剩余积分 |
+| [硅基流动国际站](https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info) | 账户总余额 |
+| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/faq) | 团队剩余网关积分 |
+
+余额口径由上游决定，可能覆盖账户、套餐或一把 API Key。项目、模型及日期筛选应用于历史用量。
 
 ## 设置
 
@@ -45,7 +66,7 @@
 | --- | --- |
 | `defaultDays` | 打开视图时的默认范围：7 / 30 / 90 / 365，默认 30 |
 | `maxTurns` | 单次统计最多读取的轮次数，默认 20000（每页 500，最多 400 页） |
-| `rates` | 单价表 JSON：`{"模型 id": {"input": 0.5, "output": 2, "cacheRead": 0.05}}`，单位是每百万 token。留空 = 完全不显示金额 |
+| `rates` | 单价表 JSON：`{"模型 id": {"input": 0.5, "output": 2, "cacheRead": 0.05}}`，单位是每百万 token。配置后显示对应模型的估算成本 |
 | `currency` | `CNY` / `USD`，只影响显示符号，不做汇率换算 |
 | `projectNames` | 项目显示名 JSON：`{"12": "Framecraft"}`，优先于自动解析出的目录名 |
 
@@ -72,7 +93,7 @@
 - 切换天数 / 项目 / 模型都会重新调用 `stats.snapshot`，参数形如
   `{days: 30}`、`{days: 30, projectId: 12}`、`{days: 30, projectId: 12, modelId: "claude-sonnet-4"}`，
   筛选在插件侧完成，前端不二次过滤。
-- 手动刷新带 `force: true`；页面可见时每 60 秒轮询一次，切到后台暂停。
+- 手动刷新会查询历史用量和上游余额。页面可见时，每 60 秒轮询历史用量。
 - 导出 CSV 由当前快照在本地生成（按天 / 按项目 / 按模型三段，UTF-8 BOM，
   文件名 `bone-token-stats-30d-2026-10-29.csv`）。
 - 外观（深 / 浅色）与语言（`zh-CN` / `en`）来自 `app.getAppearance()` 与
@@ -81,7 +102,7 @@
 ## 三个诚实的边界
 
 1. **没有价格就没有金额。** 宿主只提供 token 计数，金额全部来自 `rates` 里手写的
-   单价。没有配置时整页不出现任何货币符号，`cost` 为 `null`，说明面板会写明原因；
+   单价。没有配置时 `cost` 为 `null`，说明面板会写明原因；
    只配置了部分模型时，其余模型的金额列显示「无单价」，`cost.unpricedTokens` 单独计数。
 2. **项目名称来自当前宿主目录。** 用量行的数字 `projectId` 与 `project/list` 返回的项目 ID 对应。
    名称优先级为手动 `projectNames` 设置、宿主项目名称、路径末级目录名；已删除或无法读取的
@@ -101,8 +122,8 @@ MIT，全文见 [LICENSE](LICENSE)。Copyright (c) 2026 taokoplay。
 
 - 允许：商用、修改、分发、私有使用，保留版权与许可声明即可。
 - 不含担保：作者不对用量统计的准确性或由此产生的损失负责。
-- 数据边界：插件只读宿主提供的已完成轮次计数，不收集、不上传任何内容；你填在设置里的
-  单价表、币种与项目显示名只保存在本机插件设置中。
+- 数据边界：历史用量来自宿主。插件设置保存单价、币种、项目显示名和余额渠道。API Key
+  保留在运行内存中，用于向所选服务商发起只读查询。
 
 ## 0.1.1 升级说明
 
